@@ -78,6 +78,8 @@ tests/DuneUsersApi.Tests/
 
 ## Endpoints
 
+Guide d'utilisation complet, avec exemples et enchaînement horaire des appels à `/missings` : [HOW-TO-USE-THE-API.md](HOW-TO-USE-THE-API.md) (en anglais).
+
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/health` | `200` si l'API et la base sont disponibles, `503` si la base est injoignable |
