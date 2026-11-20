@@ -15,7 +15,7 @@ public sealed class GetMissingUserOnboardingsEndpoint(AppDbContext db)
             s.Summary = "Liste paginée des onboardings manqués par un parcours de /v1/reconciliations/user-onboardings.";
             s.Description =
                 "Renvoie, comme /v1/reconciliations/user-onboardings, les users du tenant dont onboardedAt est dans "
-                + "[fromOnboardedAt, toOnboardedAt), mais seulement ceux insérés en base dans (missingsSince, asOf]. "
+                + "[fromOnboardedAt, toOnboardedAt), mais seulement ceux insérés en base dans [missingsSince, asOf). "
                 + "Avec missingsSince = le asOf du parcours précédent, la réponse est exactement le complément de ce "
                 + "parcours, sans doublon. Tri par onboardedAt puis tenantUserId ; une page de moins de pageSize "
                 + "éléments est la dernière.";
@@ -34,8 +34,8 @@ public sealed class GetMissingUserOnboardingsEndpoint(AppDbContext db)
 
         var userOnboardings = await db.Users
             .OnboardedBetween(req.TenantId!, req.FromOnboardedAt!.Value, req.ToOnboardedAt!.Value)
-            // Borne basse exclue : complément exact d'un parcours qui a renvoyé inserted_at <= missingsSince.
-            .Where(u => u.InsertedAt > missingsSince && u.InsertedAt <= asOf)
+            // [missingsSince, asOf) : complément exact d'un parcours qui a renvoyé inserted_at < missingsSince.
+            .Where(u => u.InsertedAt >= missingsSince && u.InsertedAt < asOf)
             .ToUserOnboardingsPageAsync(req.Page, req.PageSize, ct);
 
         return new GetUserOnboardingsResponse(userOnboardings);

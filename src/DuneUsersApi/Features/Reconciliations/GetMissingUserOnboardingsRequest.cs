@@ -24,13 +24,13 @@ public sealed class GetMissingUserOnboardingsRequest
     public int PageSize { get; set; } = DefaultPageSize;
 
     /// <summary>
-    /// Borne exclue de la fenêtre d'insertion : seuls les users insérés en base après cet instant
-    /// (<c>inserted_at &gt; missingsSince</c>) sont renvoyés. Normalement le <c>asOf</c> du parcours précédent.
+    /// Borne incluse de la fenêtre d'insertion : seuls les users insérés en base à partir de cet instant
+    /// (<c>inserted_at &gt;= missingsSince</c>) sont renvoyés. Normalement le <c>asOf</c> du parcours précédent.
     /// </summary>
     public DateTimeOffset? MissingsSince { get; set; }
 
     /// <summary>
-    /// Borne incluse de la fenêtre d'insertion (<c>inserted_at &lt;= asOf</c>), fournie par l'appelant. L'appelant
+    /// Borne exclue de la fenêtre d'insertion (<c>inserted_at &lt; asOf</c>), fournie par l'appelant. L'appelant
     /// passe la même valeur pour toutes les pages, puis la réutilise comme <c>missingsSince</c> à l'appel suivant.
     /// </summary>
     public DateTimeOffset? AsOf { get; set; }

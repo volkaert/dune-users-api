@@ -21,7 +21,7 @@ public sealed class GetMissingUserOnboardingsEndpointTests(ApiFixture app) : Tes
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
-    public async Task Returns_only_users_inserted_after_missings_since_up_to_as_of()
+    public async Task Returns_only_users_inserted_from_missings_since_until_as_of()
     {
         var tenantId = NewTenantId();
         await app.InsertAsync([TestUsers.New(tenantId, "before-window", Day.AddHours(1))], Ct);
@@ -36,26 +36,24 @@ public sealed class GetMissingUserOnboardingsEndpointTests(ApiFixture app) : Tes
     }
 
     [Fact]
-    public async Task Excludes_missings_since_and_includes_as_of_whatever_their_offset()
+    public async Task Includes_missings_since_and_excludes_as_of_whatever_their_offset()
     {
         var tenantId = NewTenantId();
         var user = TestUsers.New(tenantId, "u-001", Day.AddHours(8));
         await app.InsertAsync([user], Ct);
         var plusTwo = TimeSpan.FromHours(2);
         var insertedAt = user.InsertedAt.ToOffset(plusTwo);
+        var justAfter = user.InsertedAt.AddTicks(10).ToOffset(plusTwo);
         var justBefore = user.InsertedAt.AddTicks(-10).ToOffset(plusTwo);
 
         // user.InsertedAt est relu après l'insertion ; exprimé ici avec un offset de +02:00.
-        var sinceInsertion = await GetPage(tenantId, Day, NextDay, missingsSince: insertedAt);
-        var sinceJustBefore = await GetPage(tenantId, Day, NextDay, missingsSince: justBefore);
-        var upToInsertion = await GetPage(tenantId, Day, NextDay, missingsSince: justBefore, asOf: insertedAt);
-        var upToJustBefore = await GetPage(
-            tenantId, Day, NextDay, missingsSince: justBefore.AddTicks(-10), asOf: justBefore);
+        var sinceInsertion = await GetPage(tenantId, Day, NextDay, missingsSince: insertedAt, asOf: justAfter);
+        var sinceJustAfter = await GetPage(tenantId, Day, NextDay, missingsSince: justAfter);
+        var untilInsertion = await GetPage(tenantId, Day, NextDay, missingsSince: justBefore, asOf: insertedAt);
 
-        sinceInsertion.ShouldBeEmpty();
-        sinceJustBefore.Select(o => o.TenantUserId).ShouldBe(["u-001"]);
-        upToInsertion.Select(o => o.TenantUserId).ShouldBe(["u-001"]);
-        upToJustBefore.ShouldBeEmpty();
+        sinceInsertion.Select(o => o.TenantUserId).ShouldBe(["u-001"]);
+        sinceJustAfter.ShouldBeEmpty();
+        untilInsertion.ShouldBeEmpty();
     }
 
     [Fact]

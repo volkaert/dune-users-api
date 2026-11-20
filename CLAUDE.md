@@ -16,6 +16,7 @@ API C# .NET 10 avec FastEndpoints, PostgreSQL (EF Core / Npgsql) et Docker Compo
 - Entités et configurations EF Core dans `Infrastructure/Persistence/<Entité>/`. Migrations générées avec `dotnet ef` dans `Infrastructure/Persistence/Migrations`. Nommage snake_case automatique (`UseSnakeCaseNamingConvention`).
 - Dates : `DateTimeOffset` ↔ `timestamptz`. Npgsql refuse un offset non nul : convertir en UTC (`ToUniversalTime()`) avant écriture. L'offset d'origine n'est pas conservé.
 - Heure courante : toujours via `TimeProvider` (injecté), jamais `DateTime.UtcNow` / `DateTimeOffset.UtcNow`.
+- Plages de dates de l'API : borne basse incluse, borne haute exclue (`[fromOnboardedAt, toOnboardedAt)`, `[missingsSince, asOf)`, `inserted_at < asOf`). Deux plages consécutives s'enchaînent ainsi sans chevauchement ni trou.
 - `users.inserted_at` (insertion en base) est posé par PostgreSQL (`DEFAULT now()`), jamais par l'application : EF Core l'ignore à l'écriture et le relit après l'insertion.
 - Tests : `ApiFixture` est partagée par toutes les classes de tests (application, base et horloge `FakeTimeProvider` communes). Isoler les données par un `TenantId` unique, et positionner l'horloge (`SetUtcNow`) dans les tests qui en dépendent.
 - Specs dans `docs/specs/`, plans d'implémentation dans `docs/plans/`.

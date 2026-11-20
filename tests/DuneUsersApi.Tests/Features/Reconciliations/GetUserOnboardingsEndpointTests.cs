@@ -179,7 +179,7 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
     }
 
     [Fact]
-    public async Task Includes_users_inserted_up_to_as_of_inclusive_whatever_its_offset()
+    public async Task Includes_users_inserted_before_as_of_exclusive_whatever_its_offset()
     {
         var tenantId = NewTenantId();
         var user = TestUsers.New(tenantId, "u-001", Day.AddHours(8));
@@ -188,10 +188,10 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
 
         // user.InsertedAt est relu après l'insertion ; exprimé ici avec un offset de +02:00.
         var atInsertion = await GetPage(tenantId, Day, NextDay, asOf: user.InsertedAt.ToOffset(plusTwo));
-        var justBefore = await GetPage(tenantId, Day, NextDay, asOf: user.InsertedAt.AddTicks(-10).ToOffset(plusTwo));
+        var justAfter = await GetPage(tenantId, Day, NextDay, asOf: user.InsertedAt.AddTicks(10).ToOffset(plusTwo));
 
-        atInsertion.Select(o => o.TenantUserId).ShouldBe(["u-001"]);
-        justBefore.ShouldBeEmpty();
+        atInsertion.ShouldBeEmpty();
+        justAfter.Select(o => o.TenantUserId).ShouldBe(["u-001"]);
     }
 
     [Fact]

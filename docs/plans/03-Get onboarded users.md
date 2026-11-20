@@ -31,7 +31,7 @@ Exposer un endpoint paginé qui renvoie, pour un tenant, les users onboardés su
 | `toOnboardedAt` | `DateTimeOffset` | oui | — | Borne **exclue**, strictement après `fromOnboardedAt` |
 | `page` | `int` | non | `1` | `>= 1` |
 | `pageSize` | `int` | non | `1000` | Entre `1` et `1000` |
-| `asOf` | `DateTimeOffset` | oui | — | Fourni par l'appelant. Seuls les users avec `inserted_at <= asOf` sont renvoyés (voir « Révision : `asOf` ») |
+| `asOf` | `DateTimeOffset` | oui | — | Fourni par l'appelant. Borne **exclue** : seuls les users avec `inserted_at < asOf` sont renvoyés (voir « Révision : `asOf` ») |
 
 - Plage semi-ouverte `[from, to)` : deux plages consécutives (`[J, J+1)`, `[J+1, J+2)`) ne se recouvrent pas et ne laissent pas de trou, ce qui convient à une réconciliation par jour. C'est aussi la convention utilisée dans les tests du plan 02.
 - Les dates acceptent n'importe quel offset (`Z`, `+02:00`…) ; elles sont converties en UTC avant la requête (Npgsql refuse un paramètre `timestamptz` avec un offset non nul).
@@ -66,7 +66,7 @@ Requête EF Core attendue (lecture seule, projection directe vers le DTO) :
 db.Users
     .AsNoTracking()
     .Where(u => u.TenantId == req.TenantId && u.OnboardedAt >= from && u.OnboardedAt < to)
-    .Where(u => u.InsertedAt <= asOf)
+    .Where(u => u.InsertedAt < asOf)
     .OrderBy(u => u.OnboardedAt).ThenBy(u => u.TenantUserId)
     .Skip((req.Page - 1) * req.PageSize)
     .Take(req.PageSize)
@@ -213,7 +213,7 @@ Ajout d'un paramètre `asOf` pour que des insertions pendant le parcours ne déc
 
 ### Contrat
 
-- Requête : `asOf` **obligatoire**, fourni par l'appelant (`DateTimeOffset`, n'importe quel offset, converti en UTC). Seuls les users avec `inserted_at <= asOf` (borne incluse) sont renvoyés. Absent → `400` (`'asOf' must not be empty.`).
+- Requête : `asOf` **obligatoire**, fourni par l'appelant (`DateTimeOffset`, n'importe quel offset, converti en UTC). Seuls les users avec `inserted_at < asOf` (borne exclue, voir « Révision : bornes ») sont renvoyés. Absent → `400` (`'asOf' must not be empty.`).
 - Réponse : inchangée (format de la spec) ; l'appelant connaît déjà `asOf`.
 - Usage attendu : l'appelant fixe `asOf` au début du parcours et passe la même valeur pour toutes les pages.
 
@@ -224,15 +224,19 @@ Ajout d'un paramètre `asOf` pour que des insertions pendant le parcours ne déc
 
 ### Limites
 
-- **Deux horloges** : `inserted_at` vient de l'horloge de PostgreSQL (`now()`), `asOf` de celle de l'appelant. Si l'horloge de l'appelant est en avance, `asOf` est dans le futur pour la base : des users insérés pendant le parcours ont `inserted_at <= asOf` et peuvent encore décaler les pages. `asOf` n'est pas contrôlé (pas de rejet d'un `asOf` futur).
-- **Heure de début de transaction** : `now()` est l'heure de début de la transaction d'insertion, pas celle de sa validation. Une transaction commencée avant `asOf` mais validée après produit une ligne avec `inserted_at <= asOf` qui apparaît en cours de parcours.
+- **Deux horloges** : `inserted_at` vient de l'horloge de PostgreSQL (`now()`), `asOf` de celle de l'appelant. Si l'horloge de l'appelant est en avance, `asOf` est dans le futur pour la base : des users insérés pendant le parcours ont `inserted_at < asOf` et peuvent encore décaler les pages. `asOf` n'est pas contrôlé (pas de rejet d'un `asOf` futur).
+- **Heure de début de transaction** : `now()` est l'heure de début de la transaction d'insertion, pas celle de sa validation. Une transaction commencée avant `asOf` mais validée après produit une ligne avec `inserted_at < asOf` qui apparaît en cours de parcours.
 - **Recommandation aux appelants** : choisir `asOf` légèrement dans le passé (ex. heure courante moins une minute). Cette marge absorbe à la fois un décalage d'horloge et les transactions en cours, tant qu'ils restent inférieurs à la marge.
 - **Insertions tardives** : un user inséré après `asOf` avec un `onboardedAt` dans la plage n'est pas vu par ce parcours. Il le sera par un parcours ultérieur de la même plage avec un `asOf` plus récent ; c'est au processus de réconciliation de rejouer les plages concernées si nécessaire.
 
 ### Tests ajoutés
 
-1. `asOf` est une borne incluse et accepte un offset : un user est renvoyé avec `asOf` = son `insertedAt` exprimé en `+02:00`, et exclu avec une microseconde de moins.
+1. `asOf` est une borne exclue et accepte un offset : un user est exclu avec `asOf` = son `insertedAt` exprimé en `+02:00`, et renvoyé avec une microseconde de plus.
 2. Un user inséré après `asOf` est exclu ; il est inclus avec un `asOf` postérieur.
 3. Scénario de décalage : 4 users, `pageSize=2`, insertion d'un user dans la page 1 entre les deux appels → avec le même `asOf`, la page 2 reste `[C, D]` ; avec un `asOf` postérieur à l'insertion, elle devient `[B, C]`.
 4. `asOf` absent ou illisible → `400` (`'asOf' must not be empty.`, `'asOf' must be a valid DateTimeOffset. You entered '...'.`).
 5. Le format JSON de la réponse reste `{ "userOnboardings": [...] }`.
+
+## Révision : bornes (2026-11-20)
+
+`asOf` passe de borne incluse (`inserted_at <= asOf`) à borne **exclue** (`inserted_at < asOf`), pour que toutes les plages de dates de l'API suivent la même convention, borne basse incluse et borne haute exclue, comme `[fromOnboardedAt, toOnboardedAt)`. L'endpoint `/missings` (plan 04) devient alors `[missingsSince, asOf)` et s'enchaîne sans doublon ni trou avec ce parcours. En pratique, l'écart ne porte que sur les users insérés exactement à l'instant `asOf`, à la microseconde près.

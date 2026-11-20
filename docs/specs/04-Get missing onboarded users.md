@@ -3,7 +3,7 @@ L'API doit proposer un endpoint appelé `/v1/reconciliations/user-onboardings/mi
 Ce endpoint prend les même paramètres que le endpoint `/v1/reconciliations/user-onboardings` mais prend en plus comme paramètre:
 - missingsSince (DateTimeOffset) qui devrait normalement avoir comme valeur le `asOf` de l'appel à `/v1/reconciliations/user-onboardings`
 
-Ce endpoit doit retourner les dates d'onboardings dont `insertedAt` est après le `missingsSince` (mais avant le `asOf` passé en paramètre)
+Ce endpoit doit retourner les dates d'onboardings dont `insertedAt` est à partir du `missingsSince` (inclus) et avant le `asOf` passé en paramètre (exclu) : `missingsSince <= insertedAt < asOf`
 
 Ce endpoint retourne des pages de la forme:
 ```json

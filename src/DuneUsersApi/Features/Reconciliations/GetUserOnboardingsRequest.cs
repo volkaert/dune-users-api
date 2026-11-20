@@ -22,8 +22,8 @@ public sealed class GetUserOnboardingsRequest
     public int PageSize { get; set; } = DefaultPageSize;
 
     /// <summary>
-    /// Instant de référence du parcours, fourni par l'appelant : seuls les users insérés en base au plus tard à cet
-    /// instant (<c>inserted_at &lt;= asOf</c>) sont renvoyés. L'appelant le fixe au début du parcours et passe la
+    /// Instant de référence du parcours, fourni par l'appelant (borne exclue) : seuls les users insérés en base avant
+    /// cet instant (<c>inserted_at &lt; asOf</c>) sont renvoyés. L'appelant le fixe au début du parcours et passe la
     /// même valeur pour toutes les pages.
     /// </summary>
     public DateTimeOffset? AsOf { get; set; }

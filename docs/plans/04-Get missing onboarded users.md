@@ -8,11 +8,11 @@ Permettre à l'appelant de récupérer les onboardings qu'un parcours de `/v1/re
 
 Usage attendu :
 
-1. Parcours initial de `[from, to)` avec `asOf = A1` → users avec `inserted_at <= A1`.
-2. Plus tard, appel de `/missings` sur la même plage avec `missingsSince = A1` et `asOf = A2` → users avec `A1 < inserted_at <= A2`.
+1. Parcours initial de `[from, to)` avec `asOf = A1` → users avec `inserted_at < A1`.
+2. Plus tard, appel de `/missings` sur la même plage avec `missingsSince = A1` et `asOf = A2` → users avec `A1 <= inserted_at < A2`.
 3. Appels suivants en chaîne : `missingsSince = A2`, `asOf = A3`, etc.
 
-L'union des résultats est exactement l'ensemble des users de la plage avec `inserted_at <= A_n`, sans doublon : chaque appel couvre l'intervalle d'insertion `(missingsSince, asOf]`, qui prolonge le précédent sans le chevaucher.
+L'union des résultats est exactement l'ensemble des users de la plage avec `inserted_at < A_n`, sans doublon : chaque appel couvre l'intervalle d'insertion `[missingsSince, asOf)`, qui prolonge le précédent sans le chevaucher.
 
 À la fin de ce plan :
 
@@ -35,10 +35,10 @@ Mêmes paramètres et mêmes règles que `/v1/reconciliations/user-onboardings`,
 
 | Paramètre | Type | Obligatoire | Défaut | Règles |
 |---|---|---|---|---|
-| `missingsSince` | `DateTimeOffset` | oui | — | Borne **exclue** : seuls les users avec `inserted_at > missingsSince` sont renvoyés. Normalement le `asOf` du parcours précédent |
-| `asOf` | `DateTimeOffset` | oui | — | Borne **incluse** (`inserted_at <= asOf`), comme dans le plan 03. Strictement après `missingsSince` |
+| `missingsSince` | `DateTimeOffset` | oui | — | Borne **incluse** : seuls les users avec `inserted_at >= missingsSince` sont renvoyés. Normalement le `asOf` du parcours précédent |
+| `asOf` | `DateTimeOffset` | oui | — | Borne **exclue** (`inserted_at < asOf`), comme dans le plan 03. Strictement après `missingsSince` |
 
-- **Borne basse exclue** : le parcours initial a renvoyé `inserted_at <= A1` ; `/missings` avec `missingsSince = A1` doit renvoyer le complément exact, `inserted_at > A1`. Une borne incluse renverrait une seconde fois les users insérés exactement à `A1`.
+- **Borne basse incluse, borne haute exclue**, comme `[fromOnboardedAt, toOnboardedAt)` : le parcours initial a renvoyé `inserted_at < A1` ; `/missings` avec `missingsSince = A1` renvoie le complément exact, `inserted_at >= A1`. Les deux bornes doivent être de nature opposée : deux bornes incluses renverraient deux fois les users insérés exactement à `A1`, deux bornes exclues ne les renverraient jamais. (Première version : `(missingsSince, asOf]`, voir « Révision : bornes ».)
 - `asOf <= missingsSince` → `400` (`'asOf' must be after 'missingsSince'.`), par cohérence avec `toOnboardedAt` / `fromOnboardedAt`. La fenêtre serait vide : c'est plus probablement une inversion de paramètres qu'une demande voulue.
 - Dates converties en UTC avant la requête ; `+` à encoder en `%2B` (voir plan 03).
 
@@ -67,7 +67,7 @@ Les erreurs du plan 03, plus `missingsSince` absent ou illisible, et `asOf <= mi
 db.Users
     .AsNoTracking()
     .Where(u => u.TenantId == req.TenantId && u.OnboardedAt >= from && u.OnboardedAt < to)
-    .Where(u => u.InsertedAt > missingsSince && u.InsertedAt <= asOf)
+    .Where(u => u.InsertedAt >= missingsSince && u.InsertedAt < asOf)
     .OrderBy(u => u.OnboardedAt).ThenBy(u => u.TenantUserId)
     .Skip((req.Page - 1) * req.PageSize)
     .Take(req.PageSize)
@@ -118,7 +118,7 @@ Aucune migration.
 
 ### Étape 2 — Requête, validateur, endpoint
 
-1. Créer `GetMissingUserOnboardingsRequest` (voir « Partage ») ; `MissingsSince` est documenté comme « normalement le `asOf` du parcours précédent, borne exclue ».
+1. Créer `GetMissingUserOnboardingsRequest` (voir « Partage ») ; `MissingsSince` est documenté comme « normalement le `asOf` du parcours précédent, borne incluse ».
 2. Créer `GetMissingUserOnboardingsValidator` (voir « Partage »), avec `WithMessage("'{PropertyName}' must be after '{ComparisonProperty}'.")` pour la comparaison (convention du `CLAUDE.md`).
 3. Créer `GetMissingUserOnboardingsEndpoint` : `Get("/v1/reconciliations/user-onboardings/missings")`, `AllowAnonymous()`, `Summary(...)` ; conversion des trois dates en UTC, requête décrite plus haut.
 
@@ -129,7 +129,7 @@ Aucune migration.
 `GetMissingUserOnboardingsEndpointTests` (`TestBase<ApiFixture>`, un `TenantId` unique par test, URL construite explicitement comme dans les tests du plan 03). Les instants d'insertion sont encadrés par `app.DatabaseNowAsync` entre deux insertions (insertion de A, `t1 = DatabaseNow`, insertion de B, `t2 = DatabaseNow`, insertion de C).
 
 1. **Fenêtre d'insertion** : avec `missingsSince = t1` et `asOf = t2`, seul B est renvoyé.
-2. **Bornes exactes** : avec `missingsSince` = `insertedAt` d'un user (relu en base), il est exclu ; avec `asOf` = son `insertedAt`, il est inclus. Un offset `+02:00` sur ces valeurs donne le même résultat.
+2. **Bornes exactes** : avec `missingsSince` = `insertedAt` d'un user (relu en base), il est inclus ; avec `asOf` = son `insertedAt`, il est exclu. Un offset `+02:00` sur ces valeurs donne le même résultat.
 3. **Complémentarité avec le parcours initial** (scénario de la spec) : parcours de `/user-onboardings` avec `asOf = A1`, insertion de users dans la plage (dont un ex æquo d'`onboardedAt` avec un user déjà vu), puis `/missings` avec `missingsSince = A1`, `asOf = A2` → renvoie exactement les nouveaux ; l'union des deux réponses égale `/user-onboardings` avec `asOf = A2`, sans doublon.
 4. **Filtres tenant et plage** : un user inséré dans la fenêtre mais hors plage `[from, to)`, ou d'un autre tenant, n'est pas renvoyé.
 5. **Pagination et tri** : plusieurs users manquants, `pageSize=2` → pages triées par `onboardedAt` puis `tenantUserId`, sans doublon ; dernière page incomplète.
@@ -149,14 +149,14 @@ Seul le cas des offsets sur les bornes d'onboarding n'est pas redupliqué : la c
 
 ## Points d'attention
 
-- **Transactions longues, cas aggravé** : `inserted_at` vaut l'heure de **début** de la transaction d'insertion (`now()`). Une ligne avec `inserted_at <= A1` validée après le parcours initial n'a pas été vue par celui-ci, et `/missings` ne la verra jamais non plus (`inserted_at > A1` est faux) : elle est **perdue**, pas seulement retardée. La marge recommandée au plan 03 (`asOf` = maintenant moins une minute) protège aussi ce cas, tant qu'aucune transaction d'insertion ne dure plus que la marge. Un appelant prudent peut aussi prendre `missingsSince` un peu avant le `asOf` précédent et dédoublonner sur `tenantUserId`.
+- **Transactions longues, cas aggravé** : `inserted_at` vaut l'heure de **début** de la transaction d'insertion (`now()`). Une ligne avec `inserted_at < A1` validée après le parcours initial n'a pas été vue par celui-ci, et `/missings` ne la verra jamais non plus (`inserted_at >= A1` est faux) : elle est **perdue**, pas seulement retardée. La marge recommandée au plan 03 (`asOf` = maintenant moins une minute) protège aussi ce cas, tant qu'aucune transaction d'insertion ne dure plus que la marge. Un appelant prudent peut aussi prendre `missingsSince` un peu avant le `asOf` précédent et dédoublonner sur `tenantUserId`.
 - **Deux horloges** : `missingsSince` et `asOf` viennent de l'appelant, `inserted_at` de PostgreSQL. Tant que l'appelant chaîne ses propres valeurs (`missingsSince` = son `asOf` précédent), un décalage d'horloge n'introduit ni trou ni doublon entre les appels ; il ne joue que sur la stabilité des pages, comme au plan 03.
 - **Règles dupliquées** : les deux validateurs et les deux requêtes portent les mêmes règles et valeurs par défaut, sans lien entre eux. Une évolution voulue sur les deux endpoints (ex. `pageSize` max) doit être reportée à la main dans les deux ; c'est le prix de contrats indépendants.
 
 ## Critères d'acceptation
 
 - [x] `dotnet build` passe sans warning.
-- [x] `GET /v1/reconciliations/user-onboardings/missings` renvoie les users du tenant onboardés dans `[from, to)` et insérés dans `(missingsSince, asOf]`, triés par `onboardedAt` puis `tenantUserId`, au format de la spec.
+- [x] `GET /v1/reconciliations/user-onboardings/missings` renvoie les users du tenant onboardés dans `[from, to)` et insérés dans `[missingsSince, asOf)`, triés par `onboardedAt` puis `tenantUserId`, au format de la spec.
 - [x] Avec `missingsSince` = le `asOf` d'un parcours de `/user-onboardings`, l'union des deux résultats ne contient ni doublon ni oubli.
 - [x] `missingsSince` absent ou illisible, ou `asOf <= missingsSince`, renvoie `400` ; les autres paramètres suivent les mêmes règles qu'au plan 03.
 - [x] `GetUserOnboardingsEndpoint` utilise la requête partagée et ses tests restent verts.
@@ -181,5 +181,13 @@ Prises le 2026-11-20 :
 
 Restant ouvertes (choix par défaut du plan) :
 
-4. **Borne basse exclue** (`inserted_at > missingsSince`) : c'est ce qui rend `/missings` complémentaire de `inserted_at <= asOf` sans doublon. La spec dit « après », ce qui va dans ce sens.
+4. **Bornes `[missingsSince, asOf)`** : tranché après coup, voir « Révision : bornes ».
 5. **Tri** : `onboardedAt` puis `tenantUserId` (comme le plan 03), plutôt que par `insertedAt`.
+
+## Révision : bornes (2026-11-20)
+
+La fenêtre d'insertion passe de `(missingsSince, asOf]` à **`[missingsSince, asOf)`**, et `asOf` devient une borne exclue aussi sur `/v1/reconciliations/user-onboardings` (plan 03). Toutes les plages de dates de l'API suivent ainsi la même convention : borne basse incluse, borne haute exclue, comme `[fromOnboardedAt, toOnboardedAt)`. L'enchaînement reste exact (`missingsSince` = le `asOf` précédent), et la spec 04 (« avant le `asOf` ») est formulée en ce sens.
+
+- Code : `InsertedAt < asOf` dans les deux endpoints, `InsertedAt >= missingsSince` dans `/missings`.
+- Tests : les tests de bornes exactes des deux endpoints sont inversés (`Includes_users_inserted_before_as_of_exclusive_whatever_its_offset`, `Includes_missings_since_and_excludes_as_of_whatever_their_offset`).
+- Docs : README, specs 03 et 04, plan 03.
