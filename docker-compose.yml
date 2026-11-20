@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dune_users}
+      POSTGRES_USER: ${POSTGRES_USER:-dune}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dune}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # À partir de Postgres 18, le volume se monte sur /var/lib/postgresql
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: src/DuneUsersApi/Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-dune_users};Username=${POSTGRES_USER:-dune};Password=${POSTGRES_PASSWORD:-dune}"
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

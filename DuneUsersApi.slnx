@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DuneUsersApi/DuneUsersApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DuneUsersApi.Tests/DuneUsersApi.Tests.csproj" />
+  </Folder>
+</Solution>
