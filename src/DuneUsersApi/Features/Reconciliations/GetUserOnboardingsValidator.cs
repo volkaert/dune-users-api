@@ -24,7 +24,7 @@ public sealed class GetUserOnboardingsValidator : Validator<GetUserOnboardingsRe
         RuleFor(r => r.ToOnboardedAt)
             .NotNull()
             .GreaterThan(r => r.FromOnboardedAt)
-            .When(r => r.FromOnboardedAt is not null)
+            .When(r => r.FromOnboardedAt is not null, ApplyConditionTo.CurrentValidator)
             .WithMessage("'{PropertyName}' must be after '{ComparisonProperty}'.");
 
         RuleFor(r => r.AsOf)

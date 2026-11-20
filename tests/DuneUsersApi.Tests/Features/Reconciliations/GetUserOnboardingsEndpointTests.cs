@@ -254,6 +254,7 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
             ("fromOnboardedAt", From),
             ("toOnboardedAt", To),
             ("asOf", "hier")));
+        var missingBounds = await GetErrors(Query(("tenantId", "acme"), ("asOf", AsOf)));
 
         invalidRules.Keys.ShouldBe(["tenantId", "toOnboardedAt", "asOf", "page", "pageSize"], ignoreOrder: true);
         invalidRules["tenantId"].ShouldBe(["'tenantId' must not be empty."]);
@@ -264,6 +265,9 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
         unreadableDate["fromOnboardedAt"]
             .ShouldContain("'fromOnboardedAt' must be a valid DateTimeOffset. You entered 'pas-une-date'.");
         unreadableAsOf["asOf"].ShouldBe(["'asOf' must be a valid DateTimeOffset. You entered 'hier'."]);
+        // La condition de la comparaison ne doit pas masquer le NotNull de toOnboardedAt.
+        missingBounds.Keys.ShouldBe(["fromOnboardedAt", "toOnboardedAt"], ignoreOrder: true);
+        missingBounds["toOnboardedAt"].ShouldBe(["'toOnboardedAt' must not be empty."]);
     }
 
     [Theory]

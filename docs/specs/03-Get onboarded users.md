@@ -1,4 +1,4 @@
-L'API doit proposer un endpoint appelé `/v1/reconciliations/user-onboardings` qui est unu opération paginée qui retourne les dates d'onboardings des users avec un filtre sur la date d'onboarding.
+L'API doit proposer un endpoint appelé `/v1/reconciliations/user-onboardings` qui est une opération paginée qui retourne les dates d'onboardings des users avec un filtre sur la date d'onboarding.
 
 Ce endpoint prend les paramètres suivants:
 - tenantId

@@ -1,6 +1,5 @@
 using DuneUsersApi.Infrastructure.Persistence;
 using FastEndpoints;
-using Microsoft.EntityFrameworkCore;
 
 namespace DuneUsersApi.Features.Reconciliations;
 
@@ -28,22 +27,13 @@ public sealed class GetUserOnboardingsEndpoint(AppDbContext db)
     public override async Task<GetUserOnboardingsResponse> ExecuteAsync(GetUserOnboardingsRequest req, CancellationToken ct)
     {
         // Npgsql refuse un paramètre timestamptz dont l'offset n'est pas nul.
-        var from = req.FromOnboardedAt!.Value.ToUniversalTime();
-        var to = req.ToOnboardedAt!.Value.ToUniversalTime();
         var asOf = req.AsOf!.Value.ToUniversalTime();
 
         var userOnboardings = await db.Users
-            .AsNoTracking()
-            .Where(u => u.TenantId == req.TenantId && u.OnboardedAt >= from && u.OnboardedAt < to)
+            .OnboardedBetween(req.TenantId!, req.FromOnboardedAt!.Value, req.ToOnboardedAt!.Value)
             // Fige le parcours : un user inséré après asOf ne décale pas les pages suivantes.
             .Where(u => u.InsertedAt <= asOf)
-            // tenant_user_id ne sert qu'à départager les ex æquo (ordre total et stable pour la pagination) :
-            // c'est une chaîne opaque, sans ordre métier.
-            .OrderBy(u => u.OnboardedAt).ThenBy(u => u.TenantUserId)
-            .Skip((req.Page - 1) * req.PageSize)
-            .Take(req.PageSize)
-            .Select(u => new UserOnboarding(u.TenantUserId, u.OnboardedAt))
-            .ToListAsync(ct);
+            .ToUserOnboardingsPageAsync(req.Page, req.PageSize, ct);
 
         return new GetUserOnboardingsResponse(userOnboardings);
     }
