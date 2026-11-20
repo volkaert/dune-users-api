@@ -255,6 +255,7 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
             ("toOnboardedAt", To),
             ("asOf", "hier")));
         var missingBounds = await GetErrors(Query(("tenantId", "acme"), ("asOf", AsOf)));
+        var emptyDates = await GetErrors("tenantId=acme&fromOnboardedAt=&toOnboardedAt=&asOf=");
 
         invalidRules.Keys.ShouldBe(["tenantId", "toOnboardedAt", "asOf", "page", "pageSize"], ignoreOrder: true);
         invalidRules["tenantId"].ShouldBe(["'tenantId' must not be empty."]);
@@ -268,6 +269,11 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
         // La condition de la comparaison ne doit pas masquer le NotNull de toOnboardedAt.
         missingBounds.Keys.ShouldBe(["fromOnboardedAt", "toOnboardedAt"], ignoreOrder: true);
         missingBounds["toOnboardedAt"].ShouldBe(["'toOnboardedAt' must not be empty."]);
+        // Une date vide est traitée comme absente, et non lue comme 0001-01-01.
+        emptyDates.Keys.ShouldBe(["fromOnboardedAt", "toOnboardedAt", "asOf"], ignoreOrder: true);
+        emptyDates["fromOnboardedAt"].ShouldBe(["'fromOnboardedAt' must not be empty."]);
+        emptyDates["toOnboardedAt"].ShouldBe(["'toOnboardedAt' must not be empty."]);
+        emptyDates["asOf"].ShouldBe(["'asOf' must not be empty."]);
     }
 
     [Theory]
@@ -277,6 +283,8 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
     [InlineData("acme", null, To, null, null, "fromOnboardedAt")]
     [InlineData("acme", From, null, null, null, "toOnboardedAt")]
     [InlineData("acme", "pas-une-date", To, null, null, "fromOnboardedAt")]
+    [InlineData("acme", "", To, null, null, "fromOnboardedAt")]
+    [InlineData("acme", From, " ", null, null, "toOnboardedAt")]
     [InlineData("acme", From, From, null, null, "toOnboardedAt")]
     [InlineData("acme", To, From, null, null, "toOnboardedAt")]
     [InlineData("acme", "2026-11-20T02:00:00+02:00", "2026-11-20T00:00:00Z", null, null, "toOnboardedAt")]
@@ -286,6 +294,7 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
     [InlineData("acme", From, To, null, "1001", "pageSize")]
     [InlineData("acme", From, To, null, null, "asOf", null)]
     [InlineData("acme", From, To, null, null, "asOf", "hier")]
+    [InlineData("acme", From, To, null, null, "asOf", "")]
     public async Task Rejects_invalid_parameters(
         string? tenantId,
         string? from,

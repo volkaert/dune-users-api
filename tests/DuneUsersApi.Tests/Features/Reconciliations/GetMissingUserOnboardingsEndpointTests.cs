@@ -192,6 +192,9 @@ public sealed class GetMissingUserOnboardingsEndpointTests(ApiFixture app) : Tes
             ("toOnboardedAt", To),
             ("missingsSince", "hier"),
             ("asOf", AsOf)));
+        var emptyInsertionBounds = await GetErrors(
+            $"tenantId=acme&fromOnboardedAt={Uri.EscapeDataString(From)}&toOnboardedAt={Uri.EscapeDataString(To)}"
+            + "&missingsSince=&asOf=");
 
         missingParameters.Keys.ShouldBe(["missingsSince", "asOf"], ignoreOrder: true);
         missingParameters["missingsSince"].ShouldBe(["'missingsSince' must not be empty."]);
@@ -200,6 +203,10 @@ public sealed class GetMissingUserOnboardingsEndpointTests(ApiFixture app) : Tes
         asOfNotAfterMissingsSince["asOf"].ShouldBe(["'asOf' must be after 'missingsSince'."]);
         unreadableMissingsSince["missingsSince"]
             .ShouldBe(["'missingsSince' must be a valid DateTimeOffset. You entered 'hier'."]);
+        // Une date vide est traitée comme absente : "missingsSince=" ne doit pas renvoyer tout l'historique.
+        emptyInsertionBounds.Keys.ShouldBe(["missingsSince", "asOf"], ignoreOrder: true);
+        emptyInsertionBounds["missingsSince"].ShouldBe(["'missingsSince' must not be empty."]);
+        emptyInsertionBounds["asOf"].ShouldBe(["'asOf' must not be empty."]);
     }
 
     [Theory]
@@ -219,6 +226,8 @@ public sealed class GetMissingUserOnboardingsEndpointTests(ApiFixture app) : Tes
     [InlineData("acme", From, To, null, "1001", "pageSize")]
     [InlineData("acme", From, To, null, null, "missingsSince", null)]
     [InlineData("acme", From, To, null, null, "missingsSince", "hier")]
+    [InlineData("acme", From, To, null, null, "missingsSince", "")]
+    [InlineData("acme", From, To, null, null, "asOf", MissingsSince, "")]
     [InlineData("acme", From, To, null, null, "asOf", MissingsSince, null)]
     [InlineData("acme", From, To, null, null, "asOf", MissingsSince, "hier")]
     [InlineData("acme", From, To, null, null, "asOf", MissingsSince, MissingsSince)]

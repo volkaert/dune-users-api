@@ -108,7 +108,7 @@ curl "http://localhost:8080/v1/reconciliations/user-onboardings?tenantId=acme&fr
 - Parcours stable : fixer `asOf` au début du parcours et passer la même valeur pour toutes les pages ; les users insérés entre-temps ne décalent alors pas les pages. Choisir `asOf` légèrement dans le passé (ex. maintenant moins une minute) pour absorber un décalage d'horloge avec la base et les insertions en cours.
 - Dans une query string, `+` est décodé en espace : encoder les offsets positifs (`2026-11-20T02:00:00%2B02:00`) ou utiliser `Z`. Une date non encodée est rejetée (`400`).
 - Une date sans offset est interprétée dans le fuseau du serveur : toujours préciser l'offset.
-- Paramètre manquant ou invalide : `400` avec le détail des erreurs par paramètre.
+- Paramètre manquant, vide ou invalide : `400` avec le détail des erreurs par paramètre (messages en anglais).
 
 ### `GET /v1/reconciliations/user-onboardings/missings`
 

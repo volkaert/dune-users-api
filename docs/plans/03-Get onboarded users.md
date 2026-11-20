@@ -240,3 +240,12 @@ Ajout d'un paramètre `asOf` pour que des insertions pendant le parcours ne déc
 ## Révision : bornes (2026-11-20)
 
 `asOf` passe de borne incluse (`inserted_at <= asOf`) à borne **exclue** (`inserted_at < asOf`), pour que toutes les plages de dates de l'API suivent la même convention, borne basse incluse et borne haute exclue, comme `[fromOnboardedAt, toOnboardedAt)`. L'endpoint `/missings` (plan 04) devient alors `[missingsSince, asOf)` et s'enchaîne sans doublon ni trou avec ce parcours. En pratique, l'écart ne porte que sur les users insérés exactement à l'instant `asOf`, à la microseconde près.
+
+## Révision : messages en anglais et dates vides (2026-11-20)
+
+Deux défauts du traitement des paramètres, constatés en implémentant `dune-transactions-api` et corrigés dans `Program.cs`. Ils concernent les deux endpoints (plans 03 et 04).
+
+- **Messages traduits selon la culture du serveur** : FluentValidation traduisait ses messages selon la culture courante. Sur un poste configuré en français, `'tenantId' must not be empty.` devenait `'tenantId' ne doit pas être vide.`, et les deux tests `Error_messages_name_parameters_as_exposed_by_the_api` échouaient ; dans le conteneur (culture invariante), les messages restaient en anglais. `ValidatorOptions.Global.LanguageManager.Culture` est désormais fixée à la culture invariante : les messages sont toujours en anglais, comme dans le guide.
+- **Date vide lue comme `0001-01-01`** : un paramètre de date présent mais vide (`asOf=`, `fromOnboardedAt=`, `missingsSince=`) n'était pas signalé comme absent, car FastEndpoints le liait à `default(DateTimeOffset)`. Conséquences : `fromOnboardedAt=` ou `missingsSince=` renvoyaient tout l'historique (d'où des doublons dans une chaîne `/missings`), et `asOf=` une liste vide en `200`. Un parseur `DateTimeOffset?` (`Binding.ValueParserFor`) traite désormais une valeur vide ou blanche comme absente, ce qui donne `400` avec `'<param>' must not be empty.`. Les autres valeurs sont lues comme avant (date sans offset lue dans le fuseau du serveur).
+- **Tests** : cas « dates vides » ajoutés aux tests `Error_messages_name_parameters_as_exposed_by_the_api` et `Rejects_invalid_parameters` des deux endpoints ; 78 tests au total, tous verts.
+- **Docs** : README, CLAUDE.md et `HOW-TO-USE-THE-API.md` (section « Errors ») mis à jour. `HOW-TO-USE-THE-API.pdf` n'a pas été régénéré.

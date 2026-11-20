@@ -515,7 +515,7 @@ In production, let the script compute `asOf` and schedule it hourly, for example
 
 ## 7. Errors
 
-An invalid request returns `400` with one entry per invalid parameter. Keys and messages use the parameter names exactly as they appear in the query string:
+An invalid request returns `400` with one entry per invalid parameter. Keys and messages use the parameter names exactly as they appear in the query string, and messages are always in English:
 
 ```json
 {
@@ -530,7 +530,7 @@ An invalid request returns `400` with one entry per invalid parameter. Keys and 
 
 | Cause | Message |
 |---|---|
-| Missing parameter | `'tenantId' must not be empty.` (same for `fromOnboardedAt`, `toOnboardedAt`, `asOf`, `missingsSince`) |
+| Missing parameter, or date parameter present but empty (`asOf=`) | `'tenantId' must not be empty.` (same for `fromOnboardedAt`, `toOnboardedAt`, `asOf`, `missingsSince`) |
 | `tenantId` too long | `The length of 'tenantId' must be 100 characters or fewer. You entered 101 characters.` |
 | Unreadable date, including an unencoded `+` | `'fromOnboardedAt' must be a valid DateTimeOffset. You entered '2026-11-20T00:00:00 01:00'.` |
 | `toOnboardedAt` not after `fromOnboardedAt` | `'toOnboardedAt' must be after 'fromOnboardedAt'.` |
