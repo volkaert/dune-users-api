@@ -62,7 +62,7 @@ Les dates sont stockées avec le type natif `timestamptz`, et `DateTimeOffset` c
 
 - `pk_users` sur `id`.
 - `ux_users_tenant_id_tenant_user_id` : index **unique** sur `(tenant_id, tenant_user_id)`. Un même user ne peut exister qu'une fois dans un tenant.
-- `ix_users_onboarded_at` : index sur `onboarded_at`, en prévision de la requête « users onboardés du jour » (filtre par plage `[début du jour, début du lendemain)`).
+- `ix_users_onboarded_at` : index sur `onboarded_at`, en prévision de la requête « users onboardés du jour » (filtre par plage `[début du jour, début du lendemain)`). Remplacé par l'index composite `ix_users_tenant_id_onboarded_at_tenant_user_id` au [plan 03](03-Get%20onboarded%20users.md).
 - `ck_users_address_country_code` : `CHECK (address_country_code ~ '^[A-Z]{2}$')`.
 
 ### Choix de modélisation

@@ -18,3 +18,4 @@ API C# .NET 10 avec FastEndpoints, PostgreSQL (EF Core / Npgsql) et Docker Compo
 - Heure courante : toujours via `TimeProvider` (injecté), jamais `DateTime.UtcNow` / `DateTimeOffset.UtcNow`.
 - Tests : `ApiFixture` est partagée par toutes les classes de tests (application, base et horloge `FakeTimeProvider` communes). Isoler les données par un `TenantId` unique, et positionner l'horloge (`SetUtcNow`) dans les tests qui en dépendent.
 - Specs dans `docs/specs/`, plans d'implémentation dans `docs/plans/`.
+- Erreurs de validation : les messages citent les paramètres sous leur nom d'API en camelCase (réglage global dans `Program.cs` : `DisplayNameResolver` de FluentValidation et `Binding.FailureMessage` de FastEndpoints). Dans un `WithMessage` personnalisé, utiliser `{PropertyName}` / `{ComparisonProperty}` plutôt que des noms en dur.

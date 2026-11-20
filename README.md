@@ -71,6 +71,7 @@ src/DuneUsersApi/
     <Entité>/                      # entité, types complexes et configuration EF Core (ex. Users/)
 tests/DuneUsersApi.Tests/
   Fixtures/ApiFixture.cs           # API + PostgreSQL (Testcontainers) + horloge de test
+  Fixtures/TestUsers.cs            # fabrique et insertion de users de test
   Features/<Feature>/              # tests d'intégration par feature
   Infrastructure/Persistence/      # tests du mapping EF Core
 ```
@@ -80,3 +81,26 @@ tests/DuneUsersApi.Tests/
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/health` | `200` si l'API et la base sont disponibles, `503` si la base est injoignable |
+| GET | `/v1/reconciliations/user-onboardings` | Users d'un tenant onboardés sur une plage de dates (paginé) |
+
+### `GET /v1/reconciliations/user-onboardings`
+
+Renvoie le `tenantUserId` et la date d'onboarding (en UTC) des users d'un tenant dont `onboardedAt` est dans `[fromOnboardedAt, toOnboardedAt)` (début inclus, fin exclue), triés par `onboardedAt` puis `tenantUserId` (simple départage des ex æquo, sans ordre métier).
+
+| Paramètre | Obligatoire | Défaut | Règles |
+|---|---|---|---|
+| `tenantId` | oui | — | 100 caractères max |
+| `fromOnboardedAt` | oui | — | Date ISO 8601 avec offset, borne incluse |
+| `toOnboardedAt` | oui | — | Date ISO 8601 avec offset, borne exclue, après `fromOnboardedAt` |
+| `page` | non | `1` | À partir de 1 |
+| `pageSize` | non | `1000` | Entre 1 et 1000 |
+
+```bash
+curl "http://localhost:8080/v1/reconciliations/user-onboardings?tenantId=acme&fromOnboardedAt=2026-11-20T00:00:00Z&toOnboardedAt=2026-11-21T00:00:00Z&page=1&pageSize=1000"
+# {"userOnboardings":[{"tenantUserId":"u-001","onboardedAt":"2026-11-20T08:00:00+00:00"}]}
+```
+
+- Une page de moins de `pageSize` éléments (éventuellement vide) est la dernière.
+- Dans une query string, `+` est décodé en espace : encoder les offsets positifs (`2026-11-20T02:00:00%2B02:00`) ou utiliser `Z`. Une date non encodée est rejetée (`400`).
+- Une date sans offset est interprétée dans le fuseau du serveur : toujours préciser l'offset.
+- Paramètre manquant ou invalide : `400` avec le détail des erreurs par paramètre.

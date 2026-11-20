@@ -99,12 +99,12 @@ namespace DuneUsersApi.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_users");
 
-                    b.HasIndex("OnboardedAt")
-                        .HasDatabaseName("ix_users_onboarded_at");
-
                     b.HasIndex("TenantId", "TenantUserId")
                         .IsUnique()
                         .HasDatabaseName("ux_users_tenant_id_tenant_user_id");
+
+                    b.HasIndex("TenantId", "OnboardedAt", "TenantUserId")
+                        .HasDatabaseName("ix_users_tenant_id_onboarded_at_tenant_user_id");
 
                     b.ToTable("users", null, t =>
                         {

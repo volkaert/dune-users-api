@@ -14,7 +14,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [Fact]
     public async Task Persists_and_reads_back_all_fields()
     {
-        var user = NewUser();
+        var user = TestUsers.New();
 
         await Insert(user);
         var stored = await Find(user.Id);
@@ -35,7 +35,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [InlineData("2026-11-20T10:00:00Z", "2026-11-20T10:00:00Z")]
     public async Task Stores_onboarded_at_as_utc_instant(string onboardedAt, string expectedUtc)
     {
-        var user = NewUser(onboardedAt: DateTimeOffset.Parse(onboardedAt));
+        var user = TestUsers.New(onboardedAt: DateTimeOffset.Parse(onboardedAt));
 
         await Insert(user);
         var stored = await Find(user.Id);
@@ -49,7 +49,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     {
         var now = new DateTimeOffset(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
         app.Time.SetUtcNow(now);
-        var user = NewUser();
+        var user = TestUsers.New();
 
         await Insert(user);
         var stored = await Find(user.Id);
@@ -61,7 +61,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [Fact]
     public async Task Keeps_created_at_on_update()
     {
-        var user = NewUser();
+        var user = TestUsers.New();
         await Insert(user);
         var createdAt = user.CreatedAt;
 
@@ -81,7 +81,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [Fact]
     public async Task Filters_on_onboarded_at_by_utc_range()
     {
-        var user = NewUser(onboardedAt: DateTimeOffset.Parse("2026-11-20T23:30:00-02:00"));
+        var user = TestUsers.New(onboardedAt: DateTimeOffset.Parse("2026-11-20T23:30:00-02:00"));
         await Insert(user);
 
         var dayStart = new DateTimeOffset(2026, 11, 21, 0, 0, 0, TimeSpan.Zero);
@@ -97,8 +97,8 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [Fact]
     public async Task Rejects_duplicate_tenant_user_in_same_tenant()
     {
-        var first = NewUser();
-        var duplicate = NewUser(first.TenantId, first.TenantUserId);
+        var first = TestUsers.New();
+        var duplicate = TestUsers.New(first.TenantId, first.TenantUserId);
         await Insert(first);
 
         var ex = await Should.ThrowAsync<DbUpdateException>(() => Insert(duplicate));
@@ -109,8 +109,8 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [Fact]
     public async Task Accepts_same_tenant_user_id_in_different_tenants()
     {
-        var first = NewUser();
-        var second = NewUser(tenantUserId: first.TenantUserId);
+        var first = TestUsers.New();
+        var second = TestUsers.New(tenantUserId: first.TenantUserId);
 
         await Insert(first);
         await Insert(second);
@@ -124,7 +124,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     [InlineData("FRA", PostgresErrorCodes.StringDataRightTruncation)]
     public async Task Rejects_invalid_country_code(string countryCode, string expectedSqlState)
     {
-        var user = NewUser(countryCode: countryCode);
+        var user = TestUsers.New(countryCode: countryCode);
 
         var ex = await Should.ThrowAsync<DbUpdateException>(() => Insert(user));
 
@@ -139,32 +139,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
         pending.ShouldBeFalse();
     }
 
-    private static User NewUser(
-        string? tenantId = null,
-        string? tenantUserId = null,
-        DateTimeOffset? onboardedAt = null,
-        string countryCode = "FR") => new()
-    {
-        TenantId = tenantId ?? Guid.NewGuid().ToString(),
-        TenantUserId = tenantUserId ?? Guid.NewGuid().ToString(),
-        OnboardedAt = onboardedAt ?? new DateTimeOffset(2026, 11, 20, 8, 0, 0, TimeSpan.Zero),
-        FirstName = "Paul",
-        LastName = "Atreides",
-        BirthDate = new DateOnly(1990, 4, 12),
-        Address = new Address
-        {
-            Street = "1 rue d'Arrakeen",
-            PostalCode = "75001",
-            City = "Paris",
-            CountryCode = countryCode,
-        },
-    };
-
-    private Task Insert(User user) => WithDb(async db =>
-    {
-        db.Users.Add(user);
-        await db.SaveChangesAsync(Ct);
-    });
+    private Task Insert(User user) => app.InsertAsync([user], Ct);
 
     private Task<User> Find(Guid id) => WithDb(db => db.Users.AsNoTracking().SingleAsync(u => u.Id == id, Ct));
 

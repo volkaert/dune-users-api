@@ -30,7 +30,9 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
             .IsUnique()
             .HasDatabaseName("ux_users_tenant_id_tenant_user_id");
 
-        builder.HasIndex(u => u.OnboardedAt)
-            .HasDatabaseName("ix_users_onboarded_at");
+        // Sert la réconciliation des onboardings : filtre par tenant et plage de dates, tri par date puis
+        // tenant_user_id (départage des ex æquo), sans étape de tri et sans lecture de la table.
+        builder.HasIndex(u => new { u.TenantId, u.OnboardedAt, u.TenantUserId })
+            .HasDatabaseName("ix_users_tenant_id_onboarded_at_tenant_user_id");
     }
 }
