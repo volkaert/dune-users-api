@@ -9,7 +9,7 @@ Créer la table PostgreSQL qui stocke les users, avec l'entité EF Core, sa conf
 À la fin de ce plan :
 
 - l'entité `User` (avec son adresse) existe dans `Infrastructure/Persistence` ;
-- `createdAt` est calculé par l'application au moment de l'insertion ;
+- `insertedAt` est renseigné par PostgreSQL à l'insertion ;
 - la migration initiale crée la table `users` avec ses contraintes et index ;
 - la migration est appliquée automatiquement en Development (`docker compose up`) et dans les tests (Testcontainers) ;
 - des tests d'intégration vérifient le mapping contre une vraie base PostgreSQL.
@@ -48,7 +48,7 @@ Les dates sont stockées avec le type natif `timestamptz`, et `DateTimeOffset` c
 | — | `Id` | `id` | `uuid` | non | Clé primaire technique, UUIDv7 générée côté client (comportement par défaut de Npgsql pour les clés `Guid`) |
 | tenantId | `TenantId` | `tenant_id` | `varchar(100)` | non | |
 | tenantUserId | `TenantUserId` | `tenant_user_id` | `varchar(100)` | non | Identifiant du user dans son tenant |
-| createdAt | `CreatedAt` | `created_at` | `timestamptz` | non | Calculé par l'application à l'insertion (voir étape 4) |
+| insertedAt | `InsertedAt` | `inserted_at` | `timestamptz` | non | Instant d'insertion, renseigné par PostgreSQL (`DEFAULT now()`), jamais par l'application (voir étape 4) |
 | onboardedAt | `OnboardedAt` | `onboarded_at` | `timestamptz` | non | Instant de l'onboarding, fourni par l'appelant, converti en UTC |
 | firstName | `FirstName` | `first_name` | `varchar(100)` | non | |
 | lastName | `LastName` | `last_name` | `varchar(100)` | non | |
@@ -71,7 +71,7 @@ Les dates sont stockées avec le type natif `timestamptz`, et `DateTimeOffset` c
 |---|---|---|
 | Clé primaire | `Guid` technique (UUIDv7) + unicité sur `(tenant_id, tenant_user_id)` | Clé stable et courte pour les futures tables liées (KYC) ; l'unicité métier est garantie par l'index. UUIDv7 est ordonné dans le temps, ce qui limite la fragmentation de l'index |
 | Horodatages | `DateTimeOffset` ↔ `timestamptz` natif, valeurs converties en UTC | Type natif PostgreSQL, requêtes et index directs ; l'offset d'origine n'est pas conservé (voir section « Horodatages ») |
-| `createdAt` | Calculé par l'application via `TimeProvider`, dans un intercepteur EF Core | Valeur renseignée de façon centralisée pour toute insertion, et horloge remplaçable dans les tests (`FakeTimeProvider`) |
+| `insertedAt` | `DEFAULT now()` en base, ignoré par EF Core à l'écriture et relu après l'insertion | La spec exige une valeur posée par la base : elle ne dépend ni de l'horloge de l'application ni du code appelant, et s'applique aussi aux insertions en SQL brut |
 | Date de naissance | `DateOnly` ↔ `date` | Pas d'heure ni de fuseau pour une date de naissance |
 | Adresse | Type complexe EF Core (`ComplexProperty`), colonnes préfixées `address_` dans la table `users` | Une adresse n'a pas d'identité propre : un type complexe (sémantique de valeur) est plus adapté qu'une entité possédée ou qu'une table séparée |
 | Nommage | snake_case (tables, colonnes, contraintes) via `EFCore.NamingConventions` | Convention PostgreSQL, évite les identifiants entre guillemets dans le SQL écrit à la main |
@@ -81,7 +81,6 @@ Les dates sont stockées avec le type natif `timestamptz`, et `DateTimeOffset` c
 ```
 src/DuneUsersApi/Infrastructure/Persistence/
 ├── AppDbContext.cs                      # + DbSet<User> Users
-├── CreatedAtInterceptor.cs              # SaveChangesInterceptor : renseigne CreatedAt à l'insertion
 ├── Users/
 │   ├── User.cs
 │   ├── Address.cs
@@ -89,6 +88,7 @@ src/DuneUsersApi/Infrastructure/Persistence/
 └── Migrations/
     ├── <horodatage>_CreateUsersTable.cs
     ├── <horodatage>_CreateUsersTable.Designer.cs
+    ├── <horodatage>_ReplaceUserCreatedAtWithInsertedAt.cs  # voir « Révision : insertedAt remplace createdAt »
     └── AppDbContextModelSnapshot.cs
 
 tests/DuneUsersApi.Tests/
@@ -114,7 +114,7 @@ tests/DuneUsersApi.Tests/
    - `required string TenantId`, `required string TenantUserId`, `required string FirstName`, `required string LastName` ;
    - `required DateOnly BirthDate`, `required Address Address` ;
    - `required DateTimeOffset OnboardedAt`, convertie en UTC dans son `init` (voir section « Horodatages ») ;
-   - `DateTimeOffset CreatedAt { get; private set; }` : pas d'affectation possible par l'appelant, la valeur est posée par l'intercepteur.
+   - `DateTimeOffset InsertedAt { get; private set; }` : pas d'affectation possible par l'appelant, la valeur est posée par la base.
 3. Ajouter `public DbSet<User> Users => Set<User>();` dans `AppDbContext`.
 
 ### Étape 3 — Configuration EF Core
@@ -127,19 +127,11 @@ Créer `Infrastructure/Persistence/Users/UserConfiguration.cs` (récupérée aut
 4. `ComplexProperty(u => u.Address, a => { ... })` : longueurs maximales et `CountryCode` en `char(2)` (`IsFixedLength()`).
 5. Index unique `(TenantId, TenantUserId)` et index sur `OnboardedAt`, avec les noms définis plus haut.
 
-### Étape 4 — Calcul de `createdAt` par l'application
+### Étape 4 — `insertedAt` posé par la base
 
-1. Enregistrer l'horloge dans `Program.cs` : `builder.Services.AddSingleton(TimeProvider.System);`.
-2. Créer `Infrastructure/Persistence/CreatedAtInterceptor.cs`, un `SaveChangesInterceptor` qui reçoit `TimeProvider` par injection. Dans `SavingChanges` et `SavingChangesAsync`, pour chaque entrée `User` à l'état `Added`, il affecte `entry.Property(u => u.CreatedAt).CurrentValue = timeProvider.GetUtcNow()` (valeur déjà en UTC). La valeur est toujours écrasée : un appelant ne peut pas imposer sa propre date de création.
-3. Enregistrer l'intercepteur en singleton et le brancher sur le `DbContext` :
-   ```csharp
-   builder.Services.AddSingleton<CreatedAtInterceptor>();
-   builder.Services.AddDbContext<AppDbContext>((sp, options) => options
-       .UseNpgsql(connectionString)
-       .UseSnakeCaseNamingConvention()
-       .AddInterceptors(sp.GetRequiredService<CreatedAtInterceptor>()));
-   ```
-4. Si d'autres entités ont besoin d'un `createdAt` plus tard, généraliser avec une interface (`IHasCreatedAt`). Ce n'est pas nécessaire tant qu'il n'y a que `User`.
+1. `insertedAt` : dans `UserConfiguration`, `Property(u => u.InsertedAt).HasDefaultValueSql("now()")`, avec `PropertySaveBehavior.Ignore` avant et après la sauvegarde. EF Core omet la colonne de l'`INSERT` et de l'`UPDATE`, puis relit la valeur produite par la base (`RETURNING`). Une valeur affectée par l'application est ignorée.
+   - `now()` est l'heure de **début de la transaction** : les users insérés dans une même transaction ont le même `insertedAt`. Ce n'est pas l'heure de validation (commit).
+2. `TimeProvider` reste enregistré dans `Program.cs` (`builder.Services.AddSingleton(TimeProvider.System);`) pour le code applicatif qui a besoin de l'heure courante.
 
 ### Étape 5 — Migration initiale
 
@@ -149,7 +141,7 @@ Créer `Infrastructure/Persistence/Users/UserConfiguration.cs` (récupérée aut
      --project src/DuneUsersApi \
      --output-dir Infrastructure/Persistence/Migrations
    ```
-2. Relire le code généré et le SQL produit (`dotnet ef migrations script --project src/DuneUsersApi`) : types de colonnes (`timestamptz` pour les deux dates, pas de valeur par défaut sur `created_at`), nom et définition des index et de la contrainte `CHECK`.
+2. Relire le code généré et le SQL produit (`dotnet ef migrations script --project src/DuneUsersApi`) : types de colonnes (`timestamptz` pour les deux dates, `DEFAULT now()` sur `inserted_at` uniquement), nom et définition des index et de la contrainte `CHECK`.
 3. Vérifier que le build passe toujours : les fichiers de migration générés ne doivent pas déclencher de warnings (sinon, les exclure de l'analyse via un `.editorconfig` ciblé sur `Migrations/`).
 
 **Validation** : `docker compose up --build`, puis `docker compose exec postgres psql -U dune -d dune_users -c '\d users'` affiche la table attendue.
@@ -164,8 +156,8 @@ Cas à couvrir :
 
 1. **Aller-retour complet** : insérer un user, le relire avec un nouveau `DbContext`, et vérifier que tous les champs, y compris l'adresse, sont identiques.
 2. **Date avec offset acceptée** : un `OnboardedAt` à `2026-11-20T10:00:00+02:00` est enregistré sans erreur et relu comme `2026-11-20T08:00:00+00:00` (même instant, offset nul). Même vérification avec un offset négatif.
-3. **`CreatedAt` calculé par l'application** : après `SaveChangesAsync`, `CreatedAt` vaut exactement l'heure du `FakeTimeProvider`, avec un offset nul.
-4. **`CreatedAt` non modifié par une mise à jour** : avancer l'horloge, modifier le user, sauvegarder, et vérifier que `CreatedAt` n'a pas changé.
+3. **`InsertedAt` posé par la base** : la valeur est encadrée par `SELECT now()` exécuté avant et après l'insertion, et relue dans l'entité après `SaveChangesAsync`. Une valeur affectée par l'application avant l'insertion est ignorée.
+4. **`InsertedAt` non modifié par une mise à jour** : modifier le user (et tenter de modifier `InsertedAt`), sauvegarder, et vérifier que `InsertedAt` n'a pas changé.
 5. **Requête par plage de dates** : un user onboardé à `2026-11-20T23:30:00-02:00` est trouvé par un filtre `OnboardedAt` sur la plage du 21/11 en UTC.
 6. **Unicité `(tenant_id, tenant_user_id)`** : insérer deux users avec le même couple lève une `DbUpdateException` dont l'exception interne est une `PostgresException` avec `SqlState` = `23505` (`PostgresErrorCodes.UniqueViolation`).
 7. **Même `tenantUserId` dans deux tenants différents** : accepté.
@@ -183,7 +175,7 @@ Cas à couvrir :
 ## Points d'attention
 
 - **Offset non conservé** : une API qui renvoie `onboardedAt` le renverra en UTC, même s'il a été reçu avec un autre offset. Si l'offset d'origine devient nécessaire plus tard, il faudra ajouter une colonne dédiée (`smallint`, offset en minutes), PostgreSQL n'ayant pas de type natif pour ça.
-- **Contournement de l'intercepteur** : une insertion en SQL brut (`ExecuteSqlRaw`, `COPY`, script d'import) ne passe pas par l'intercepteur et doit renseigner `created_at` elle-même. La colonne étant `NOT NULL` sans valeur par défaut, un oubli est rejeté par la base.
+- **Insertions en SQL brut** (`ExecuteSqlRaw`, `COPY`, script d'import) : `inserted_at` est renseigné par la valeur par défaut de la colonne. Une insertion en SQL brut peut en revanche forcer `inserted_at` en le fournissant explicitement ; seul EF Core l'ignore.
 - **« Users onboardés du jour »** : le « jour » dépend d'un fuseau horaire (UTC ou fuseau du tenant). Ce choix appartient à la spec de l'endpoint concerné. L'index sur `onboarded_at` sert dans les deux cas.
 - **Données personnelles** : nom, prénom, date de naissance et adresse sont des données personnelles (RGPD). Le plan ne prévoit ni chiffrement ni pseudonymisation ; à traiter dans une spec dédiée si besoin.
 
@@ -192,7 +184,7 @@ Cas à couvrir :
 - [x] `dotnet build` passe sans warning.
 - [x] La migration `CreateUsersTable` crée la table `users` avec les colonnes, types, contraintes et index décrits dans ce plan.
 - [x] Une date fournie avec un offset non nul est enregistrée sans erreur, au bon instant.
-- [x] `createdAt` est calculé par l'application, via `TimeProvider`.
+- [x] `insertedAt` est renseigné par PostgreSQL.
 - [x] `docker compose up --build` applique la migration (environnement Development) et la table est présente dans la base.
 - [x] `dotnet test` passe, y compris les tests de `UserPersistenceTests`.
 - [x] Aucun changement de modèle en attente (`HasPendingModelChanges()` = `false`).
@@ -217,3 +209,13 @@ Cas à couvrir :
 2. **Champs obligatoires** : le plan rend tous les champs `NOT NULL`, adresse comprise. Peut-on stocker un user pas encore onboardé (`onboarded_at` nullable) ou sans adresse ?
 3. **Longueurs maximales** : les valeurs proposées (100 pour les identifiants de tenant et les noms, 200 pour la rue, 20 pour le code postal) sont-elles adaptées ? Quel est le format réel de `tenantId` et `tenantUserId` (UUID, slug, identifiant externe) ?
 4. **Nommage snake_case** via `EFCore.NamingConventions` (choix du plan), ou noms de colonnes explicites dans la configuration (une dépendance de moins) ?
+
+## Révision : `insertedAt` remplace `createdAt` (2026-11-20)
+
+La spec remplace `createdAt` par `insertedAt` : l'instant d'insertion du user en base, posé **par la base** et non par l'application. Une date de création métier n'est pas nécessaire : `onboardedAt` joue ce rôle.
+
+Changements par rapport à la version initiale du plan :
+
+- la colonne `created_at` et l'intercepteur `CreatedAtInterceptor` (qui la renseignait avec l'horloge de l'application) sont supprimés ;
+- nouvelle colonne `inserted_at timestamptz NOT NULL DEFAULT now()` (migration `ReplaceUserCreatedAtWithInsertedAt`). Les lignes existantes au moment de la migration perdent leur `created_at` et reçoivent l'heure d'application de la migration comme `inserted_at` ;
+- les tests `CreatedAt` sur l'horloge de l'application sont remplacés par les cas 3 et 4 de l'étape 6. Les mentions de `CreatedAt` dans les « Notes d'implémentation » ci-dessus concernent la version initiale.

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace DuneUsersApi.Infrastructure.Persistence.Users;
@@ -12,6 +13,11 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
             "address_country_code ~ '^[A-Z]{2}$'"));
 
         builder.HasKey(u => u.Id);
+
+        // Toujours fixé par la base : la colonne est omise de l'INSERT (valeur par défaut) et de l'UPDATE, puis relue.
+        var insertedAt = builder.Property(u => u.InsertedAt).HasDefaultValueSql("now()");
+        insertedAt.Metadata.SetBeforeSaveBehavior(PropertySaveBehavior.Ignore);
+        insertedAt.Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
 
         builder.Property(u => u.TenantId).HasMaxLength(100);
         builder.Property(u => u.TenantUserId).HasMaxLength(100);
@@ -31,8 +37,10 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
             .HasDatabaseName("ux_users_tenant_id_tenant_user_id");
 
         // Sert la réconciliation des onboardings : filtre par tenant et plage de dates, tri par date puis
-        // tenant_user_id (départage des ex æquo), sans étape de tri et sans lecture de la table.
+        // tenant_user_id (départage des ex æquo), sans étape de tri. inserted_at (filtre asOf) est inclus dans
+        // l'index sans en être une clé : la requête est servie par l'index seul, sans lecture de la table.
         builder.HasIndex(u => new { u.TenantId, u.OnboardedAt, u.TenantUserId })
+            .IncludeProperties(u => u.InsertedAt)
             .HasDatabaseName("ix_users_tenant_id_onboarded_at_tenant_user_id");
     }
 }

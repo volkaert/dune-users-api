@@ -10,11 +10,9 @@ var connectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("Connection string 'Postgres' is not configured.");
 
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<CreatedAtInterceptor>();
-builder.Services.AddDbContext<AppDbContext>((sp, options) => options
+builder.Services.AddDbContext<AppDbContext>(options => options
     .UseNpgsql(connectionString)
-    .UseSnakeCaseNamingConvention()
-    .AddInterceptors(sp.GetRequiredService<CreatedAtInterceptor>()));
+    .UseSnakeCaseNamingConvention());
 builder.Services.AddFastEndpoints();
 
 var app = builder.Build();

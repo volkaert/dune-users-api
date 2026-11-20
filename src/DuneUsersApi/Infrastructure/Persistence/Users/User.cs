@@ -12,10 +12,10 @@ public sealed class User
     public required string TenantUserId { get; init; }
 
     /// <summary>
-    /// Date de création du user en base, en UTC. Calculée par l'application à l'insertion
-    /// (<see cref="CreatedAtInterceptor"/>) : toute valeur affectée avant l'insertion est écrasée.
+    /// Instant d'insertion du user en base, en UTC. Renseigné par PostgreSQL (<c>DEFAULT now()</c>, heure de début
+    /// de la transaction) et relu après l'insertion : l'application ne peut ni le fixer ni le modifier.
     /// </summary>
-    public DateTimeOffset CreatedAt { get; private set; }
+    public DateTimeOffset InsertedAt { get; private set; }
 
     /// <summary>
     /// Instant de l'onboarding. Accepte n'importe quel offset, mais la valeur est convertie en UTC :

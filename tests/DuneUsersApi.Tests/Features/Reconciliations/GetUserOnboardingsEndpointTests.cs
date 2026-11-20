@@ -154,7 +154,7 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
     [Fact]
     public async Task Returns_empty_list_for_unknown_tenant()
     {
-        var rsp = await Get(Query(NewTenantId(), Day, NextDay));
+        var rsp = await Get(Query(NewTenantId(), Day, NextDay, asOf: await app.DatabaseNowAsync(Ct)));
 
         rsp.StatusCode.ShouldBe(HttpStatusCode.OK);
         using var json = JsonDocument.Parse(await rsp.Content.ReadAsStringAsync(Ct));
@@ -167,7 +167,7 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
         var tenantId = NewTenantId();
         await app.InsertAsync([TestUsers.New(tenantId, "u-001", DateTimeOffset.Parse("2026-11-20T10:00:00+02:00"))], Ct);
 
-        var rsp = await Get(Query(tenantId, Day, NextDay));
+        var rsp = await Get(Query(tenantId, Day, NextDay, asOf: await app.DatabaseNowAsync(Ct)));
 
         rsp.StatusCode.ShouldBe(HttpStatusCode.OK);
         using var json = JsonDocument.Parse(await rsp.Content.ReadAsStringAsync(Ct));
@@ -176,6 +176,64 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
         item.EnumerateObject().Select(p => p.Name).ShouldBe(["tenantUserId", "onboardedAt"]);
         item.GetProperty("tenantUserId").GetString().ShouldBe("u-001");
         item.GetProperty("onboardedAt").GetString().ShouldBe("2026-11-20T08:00:00+00:00");
+    }
+
+    [Fact]
+    public async Task Includes_users_inserted_up_to_as_of_inclusive_whatever_its_offset()
+    {
+        var tenantId = NewTenantId();
+        var user = TestUsers.New(tenantId, "u-001", Day.AddHours(8));
+        await app.InsertAsync([user], Ct);
+        var plusTwo = TimeSpan.FromHours(2);
+
+        // user.InsertedAt est relu après l'insertion ; exprimé ici avec un offset de +02:00.
+        var atInsertion = await GetPage(tenantId, Day, NextDay, asOf: user.InsertedAt.ToOffset(plusTwo));
+        var justBefore = await GetPage(tenantId, Day, NextDay, asOf: user.InsertedAt.AddTicks(-10).ToOffset(plusTwo));
+
+        atInsertion.Select(o => o.TenantUserId).ShouldBe(["u-001"]);
+        justBefore.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Excludes_users_inserted_after_as_of()
+    {
+        var tenantId = NewTenantId();
+        await app.InsertAsync([TestUsers.New(tenantId, "before-as-of", Day.AddHours(2))], Ct);
+        var asOf = await app.DatabaseNowAsync(Ct);
+        await app.InsertAsync([TestUsers.New(tenantId, "after-as-of", Day.AddHours(1))], Ct);
+        var laterAsOf = await app.DatabaseNowAsync(Ct);
+
+        var withAsOf = await GetPage(tenantId, Day, NextDay, asOf: asOf);
+        var withLaterAsOf = await GetPage(tenantId, Day, NextDay, asOf: laterAsOf);
+
+        withAsOf.Select(o => o.TenantUserId).ShouldBe(["before-as-of"]);
+        withLaterAsOf.Select(o => o.TenantUserId).ShouldBe(["after-as-of", "before-as-of"]);
+    }
+
+    [Fact]
+    public async Task Keeps_pages_stable_when_users_are_inserted_during_traversal_with_same_as_of()
+    {
+        var tenantId = NewTenantId();
+        await app.InsertAsync(
+        [
+            TestUsers.New(tenantId, "A", Day.AddHours(8)),
+            TestUsers.New(tenantId, "B", Day.AddHours(9)),
+            TestUsers.New(tenantId, "C", Day.AddHours(10)),
+            TestUsers.New(tenantId, "D", Day.AddHours(11)),
+        ], Ct);
+        var asOf = await app.DatabaseNowAsync(Ct);
+
+        var page1 = await GetPage(tenantId, Day, NextDay, page: 1, pageSize: 2, asOf: asOf);
+        // Inséré pendant le parcours, avec un onboardedAt situé dans la page déjà lue.
+        await app.InsertAsync([TestUsers.New(tenantId, "X", Day.AddHours(8.5))], Ct);
+        var page2 = await GetPage(tenantId, Day, NextDay, page: 2, pageSize: 2, asOf: asOf);
+        var page2WithNewAsOf = await GetPage(
+            tenantId, Day, NextDay, page: 2, pageSize: 2, asOf: await app.DatabaseNowAsync(Ct));
+
+        page1.Select(o => o.TenantUserId).ShouldBe(["A", "B"]);
+        page2.Select(o => o.TenantUserId).ShouldBe(["C", "D"]);
+        // Avec un asOf postérieur à l'insertion, les pages se décalent : B est renvoyé deux fois et X n'est jamais vu.
+        page2WithNewAsOf.Select(o => o.TenantUserId).ShouldBe(["B", "C"]);
     }
 
     [Fact]
@@ -189,15 +247,23 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
         var unreadableDate = await GetErrors(Query(
             ("tenantId", "acme"),
             ("fromOnboardedAt", "pas-une-date"),
-            ("toOnboardedAt", To)));
+            ("toOnboardedAt", To),
+            ("asOf", AsOf)));
+        var unreadableAsOf = await GetErrors(Query(
+            ("tenantId", "acme"),
+            ("fromOnboardedAt", From),
+            ("toOnboardedAt", To),
+            ("asOf", "hier")));
 
-        invalidRules.Keys.ShouldBe(["tenantId", "toOnboardedAt", "page", "pageSize"], ignoreOrder: true);
+        invalidRules.Keys.ShouldBe(["tenantId", "toOnboardedAt", "asOf", "page", "pageSize"], ignoreOrder: true);
         invalidRules["tenantId"].ShouldBe(["'tenantId' must not be empty."]);
         invalidRules["toOnboardedAt"].ShouldBe(["'toOnboardedAt' must be after 'fromOnboardedAt'."]);
+        invalidRules["asOf"].ShouldBe(["'asOf' must not be empty."]);
         invalidRules["page"].ShouldBe(["'page' must be between 1 and 1000000. You entered 0."]);
         invalidRules["pageSize"].ShouldBe(["'pageSize' must be between 1 and 1000. You entered 5000."]);
         unreadableDate["fromOnboardedAt"]
             .ShouldContain("'fromOnboardedAt' must be a valid DateTimeOffset. You entered 'pas-une-date'.");
+        unreadableAsOf["asOf"].ShouldBe(["'asOf' must be a valid DateTimeOffset. You entered 'hier'."]);
     }
 
     [Theory]
@@ -214,15 +280,24 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
     [InlineData("acme", From, To, "1000001", null, "page")]
     [InlineData("acme", From, To, null, "0", "pageSize")]
     [InlineData("acme", From, To, null, "1001", "pageSize")]
+    [InlineData("acme", From, To, null, null, "asOf", null)]
+    [InlineData("acme", From, To, null, null, "asOf", "hier")]
     public async Task Rejects_invalid_parameters(
-        string? tenantId, string? from, string? to, string? page, string? pageSize, string expectedErrorKey)
+        string? tenantId,
+        string? from,
+        string? to,
+        string? page,
+        string? pageSize,
+        string expectedErrorKey,
+        string? asOf = AsOf)
     {
         var rsp = await Get(Query(
             ("tenantId", tenantId),
             ("fromOnboardedAt", from),
             ("toOnboardedAt", to),
             ("page", page),
-            ("pageSize", pageSize)));
+            ("pageSize", pageSize),
+            ("asOf", asOf)));
 
         rsp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         var error = await rsp.Content.ReadFromJsonAsync<ErrorResponse>(Ct);
@@ -231,15 +306,23 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
 
     private const string From = "2026-11-20T00:00:00Z";
     private const string To = "2026-11-21T00:00:00Z";
+    private const string AsOf = "2026-11-21T06:00:00Z";
     private const string TooLongTenantId =
         "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789X";
 
     private static string NewTenantId() => Guid.NewGuid().ToString();
 
+    /// <summary>Appelle l'endpoint ; sans <paramref name="asOf"/>, utilise l'heure courante de la base.</summary>
     private async Task<IReadOnlyList<UserOnboarding>> GetPage(
-        string tenantId, DateTimeOffset from, DateTimeOffset to, int? page = null, int? pageSize = null)
+        string tenantId,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int? page = null,
+        int? pageSize = null,
+        DateTimeOffset? asOf = null)
     {
-        var rsp = await Get(Query(tenantId, from, to, page, pageSize));
+        asOf ??= await app.DatabaseNowAsync(Ct);
+        var rsp = await Get(Query(tenantId, from, to, page, pageSize, asOf));
 
         rsp.StatusCode.ShouldBe(HttpStatusCode.OK);
         var body = await rsp.Content.ReadFromJsonAsync<GetUserOnboardingsResponse>(Ct);
@@ -258,13 +341,19 @@ public sealed class GetUserOnboardingsEndpointTests(ApiFixture app) : TestBase<A
     private Task<HttpResponseMessage> Get(string query) => app.Client.GetAsync($"{Route}?{query}", Ct);
 
     private static string Query(
-        string tenantId, DateTimeOffset from, DateTimeOffset to, int? page = null, int? pageSize = null) => Query(
+        string tenantId,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int? page = null,
+        int? pageSize = null,
+        DateTimeOffset? asOf = null) => Query(
         ("tenantId", tenantId),
         // Format ISO 8601 avec offset explicite : le "+" est encodé en %2B par Uri.EscapeDataString.
         ("fromOnboardedAt", from.ToString("O")),
         ("toOnboardedAt", to.ToString("O")),
         ("page", page?.ToString()),
-        ("pageSize", pageSize?.ToString()));
+        ("pageSize", pageSize?.ToString()),
+        ("asOf", asOf?.ToString("O")));
 
     private static string Query(params (string Name, string? Value)[] parameters) => string.Join(
         "&",

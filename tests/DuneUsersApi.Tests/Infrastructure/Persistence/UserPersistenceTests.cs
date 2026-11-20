@@ -21,7 +21,7 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
 
         stored.TenantId.ShouldBe(user.TenantId);
         stored.TenantUserId.ShouldBe(user.TenantUserId);
-        stored.CreatedAt.ShouldBe(user.CreatedAt);
+        stored.InsertedAt.ShouldBe(user.InsertedAt);
         stored.OnboardedAt.ShouldBe(user.OnboardedAt);
         stored.FirstName.ShouldBe(user.FirstName);
         stored.LastName.ShouldBe(user.LastName);
@@ -45,37 +45,59 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     }
 
     [Fact]
-    public async Task Sets_created_at_from_application_clock()
+    public async Task Sets_inserted_at_from_database_clock()
     {
-        var now = new DateTimeOffset(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
-        app.Time.SetUtcNow(now);
+        // Encadré par l'heure de PostgreSQL : la valeur vient de la base, pas de l'horloge de l'application
+        // (FakeTimeProvider, figée sur une autre date).
         var user = TestUsers.New();
 
+        var before = await DatabaseNow();
         await Insert(user);
+        var after = await DatabaseNow();
         var stored = await Find(user.Id);
 
-        stored.CreatedAt.ShouldBe(now);
-        stored.CreatedAt.Offset.ShouldBe(TimeSpan.Zero);
+        stored.InsertedAt.ShouldBeInRange(before, after);
+        stored.InsertedAt.Offset.ShouldBe(TimeSpan.Zero);
+        user.InsertedAt.ShouldBe(stored.InsertedAt, "valeur relue après l'insertion");
     }
 
     [Fact]
-    public async Task Keeps_created_at_on_update()
+    public async Task Ignores_inserted_at_set_by_application()
+    {
+        var forced = new DateTimeOffset(2001, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var user = TestUsers.New();
+
+        var before = await DatabaseNow();
+        await WithDb(async db =>
+        {
+            db.Users.Add(user);
+            db.Entry(user).Property(u => u.InsertedAt).CurrentValue = forced;
+            await db.SaveChangesAsync(Ct);
+        });
+        var stored = await Find(user.Id);
+
+        stored.InsertedAt.ShouldNotBe(forced);
+        stored.InsertedAt.ShouldBeGreaterThanOrEqualTo(before);
+    }
+
+    [Fact]
+    public async Task Keeps_inserted_at_on_update()
     {
         var user = TestUsers.New();
         await Insert(user);
-        var createdAt = user.CreatedAt;
+        var inserted = await Find(user.Id);
 
-        app.Time.Advance(TimeSpan.FromHours(1));
         await WithDb(async db =>
         {
             var tracked = await db.Users.SingleAsync(u => u.Id == user.Id, Ct);
             tracked.FirstName = "Leto";
+            db.Entry(tracked).Property(u => u.InsertedAt).CurrentValue = DateTimeOffset.UnixEpoch;
             await db.SaveChangesAsync(Ct);
         });
         var stored = await Find(user.Id);
 
         stored.FirstName.ShouldBe("Leto");
-        stored.CreatedAt.ShouldBe(createdAt);
+        stored.InsertedAt.ShouldBe(inserted.InsertedAt);
     }
 
     [Fact]
@@ -140,6 +162,8 @@ public sealed class UserPersistenceTests(ApiFixture app) : TestBase<ApiFixture>
     }
 
     private Task Insert(User user) => app.InsertAsync([user], Ct);
+
+    private Task<DateTimeOffset> DatabaseNow() => app.DatabaseNowAsync(Ct);
 
     private Task<User> Find(Guid id) => WithDb(db => db.Users.AsNoTracking().SingleAsync(u => u.Id == id, Ct));
 

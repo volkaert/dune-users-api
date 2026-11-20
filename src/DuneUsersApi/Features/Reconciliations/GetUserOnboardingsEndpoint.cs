@@ -17,7 +17,9 @@ public sealed class GetUserOnboardingsEndpoint(AppDbContext db)
             s.Description =
                 "Renvoie le tenantUserId et la date d'onboarding (UTC) des users dont onboardedAt est dans "
                 + "[fromOnboardedAt, toOnboardedAt), triés par onboardedAt puis tenantUserId. "
-                + "Une page de moins de pageSize éléments est la dernière.";
+                + "Une page de moins de pageSize éléments est la dernière. "
+                + "Seuls les users insérés en base au plus tard à asOf sont renvoyés : en passant le même asOf pour "
+                + "toutes les pages, le parcours reste stable même si des users sont insérés pendant ce temps.";
             s.Responses[200] = "Une page de résultats, éventuellement vide.";
             s.Responses[400] = "Paramètre manquant, mal formé ou invalide.";
         });
@@ -28,10 +30,13 @@ public sealed class GetUserOnboardingsEndpoint(AppDbContext db)
         // Npgsql refuse un paramètre timestamptz dont l'offset n'est pas nul.
         var from = req.FromOnboardedAt!.Value.ToUniversalTime();
         var to = req.ToOnboardedAt!.Value.ToUniversalTime();
+        var asOf = req.AsOf!.Value.ToUniversalTime();
 
         var userOnboardings = await db.Users
             .AsNoTracking()
             .Where(u => u.TenantId == req.TenantId && u.OnboardedAt >= from && u.OnboardedAt < to)
+            // Fige le parcours : un user inséré après asOf ne décale pas les pages suivantes.
+            .Where(u => u.InsertedAt <= asOf)
             // tenant_user_id ne sert qu'à départager les ex æquo (ordre total et stable pour la pagination) :
             // c'est une chaîne opaque, sans ordre métier.
             .OrderBy(u => u.OnboardedAt).ThenBy(u => u.TenantUserId)

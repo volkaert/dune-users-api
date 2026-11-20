@@ -32,6 +32,14 @@ public sealed class ApiFixture : AppFixture<Program>
     /// </summary>
     public FakeTimeProvider Time => (FakeTimeProvider)Services.GetRequiredService<TimeProvider>();
 
+    /// <summary>Heure courante de PostgreSQL (<c>now()</c>), l'horloge qui renseigne <c>users.inserted_at</c>.</summary>
+    public async Task<DateTimeOffset> DatabaseNowAsync(CancellationToken ct)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Database.SqlQuery<DateTimeOffset>($"SELECT now() AS \"Value\"").SingleAsync(ct);
+    }
+
     protected override async ValueTask PreSetupAsync()
     {
         _postgres = new PostgreSqlBuilder("postgres:18-alpine").Build();

@@ -22,7 +22,7 @@ Exposer un endpoint paginé qui renvoie, pour un tenant, les users onboardés su
 
 ### Requête
 
-`GET /v1/reconciliations/user-onboardings?tenantId=acme&fromOnboardedAt=2026-11-20T00:00:00Z&toOnboardedAt=2026-11-21T00:00:00Z&page=1&pageSize=1000`
+`GET /v1/reconciliations/user-onboardings?tenantId=acme&fromOnboardedAt=2026-11-20T00:00:00Z&toOnboardedAt=2026-11-21T00:00:00Z&asOf=2026-11-21T06:00:00Z&page=1&pageSize=1000`
 
 | Paramètre | Type | Obligatoire | Défaut | Règles |
 |---|---|---|---|---|
@@ -31,6 +31,7 @@ Exposer un endpoint paginé qui renvoie, pour un tenant, les users onboardés su
 | `toOnboardedAt` | `DateTimeOffset` | oui | — | Borne **exclue**, strictement après `fromOnboardedAt` |
 | `page` | `int` | non | `1` | `>= 1` |
 | `pageSize` | `int` | non | `1000` | Entre `1` et `1000` |
+| `asOf` | `DateTimeOffset` | oui | — | Fourni par l'appelant. Seuls les users avec `inserted_at <= asOf` sont renvoyés (voir « Révision : `asOf` ») |
 
 - Plage semi-ouverte `[from, to)` : deux plages consécutives (`[J, J+1)`, `[J+1, J+2)`) ne se recouvrent pas et ne laissent pas de trou, ce qui convient à une réconciliation par jour. C'est aussi la convention utilisée dans les tests du plan 02.
 - Les dates acceptent n'importe quel offset (`Z`, `+02:00`…) ; elles sont converties en UTC avant la requête (Npgsql refuse un paramètre `timestamptz` avec un offset non nul).
@@ -65,6 +66,7 @@ Requête EF Core attendue (lecture seule, projection directe vers le DTO) :
 db.Users
     .AsNoTracking()
     .Where(u => u.TenantId == req.TenantId && u.OnboardedAt >= from && u.OnboardedAt < to)
+    .Where(u => u.InsertedAt <= asOf)
     .OrderBy(u => u.OnboardedAt).ThenBy(u => u.TenantUserId)
     .Skip((req.Page - 1) * req.PageSize)
     .Take(req.PageSize)
@@ -74,7 +76,7 @@ db.Users
 
 L'index existant `ix_users_onboarded_at` (sur `onboarded_at` seul) n'est pas adapté : il faudrait ensuite filtrer le tenant ligne par ligne puis trier. On le remplace par un index composite :
 
-- `ix_users_tenant_id_onboarded_at_tenant_user_id` sur `(tenant_id, onboarded_at, tenant_user_id)`.
+- `ix_users_tenant_id_onboarded_at_tenant_user_id` sur `(tenant_id, onboarded_at, tenant_user_id)`, avec `INCLUDE (inserted_at)` depuis l'ajout de `asOf`.
 
 Il sert à la fois l'égalité sur le tenant, la plage de dates et le tri complet, sans étape de tri, et couvre toutes les colonnes lues (parcours d'index seul possible). L'index `ix_users_onboarded_at` est supprimé : il avait été créé en prévision de cette requête, qui filtre toujours par tenant.
 
@@ -172,7 +174,7 @@ Cas à couvrir :
 
 - **Encodage du `+` dans l'URL** : dans une query string, `+` est décodé en espace. `fromOnboardedAt=2026-11-20T10:00:00+02:00` non encodé devient illisible (`400`). Les clients doivent encoder (`%2B`) ou utiliser `Z`. À documenter dans le `README.md`.
 - **Date sans offset** : `2026-11-20T10:00:00` est interprétée dans le fuseau du serveur (UTC dans le conteneur, mais pas forcément en local). Le validateur ne peut pas le détecter une fois la valeur liée. Option : lier les bornes en `string` et exiger un offset explicite (voir « Décisions à valider »).
-- **Pagination par offset et données qui changent** : si un user est inséré dans la plage pendant le parcours, les pages suivantes se décalent (un élément vu deux fois ou manqué). Pour une réconciliation sur une plage passée (jour terminé), le risque est faible. La pagination par curseur (`after=(onboardedAt, tenantUserId)`) éliminerait ce problème et le coût croissant de `OFFSET` sur les pages lointaines.
+- **Pagination par offset et données qui changent** : sans `asOf`, si un user est inséré dans la plage pendant le parcours avec une position déjà lue, les pages suivantes se décalent (un élément vu deux fois, un autre jamais vu). `asOf` règle ce cas (voir « Révision : `asOf` »). La pagination par curseur (`after=(onboardedAt, tenantUserId)`) éliminerait en plus le coût croissant de `OFFSET` sur les pages lointaines.
 - **Sécurité** : sans authentification, n'importe quel appelant peut lire les identifiants de n'importe quel tenant en passant son `tenantId`. À traiter dans une spec dédiée (le `tenantId` viendra probablement du jeton plutôt que de la query).
 
 ## Critères d'acceptation
@@ -204,3 +206,33 @@ Cas à couvrir :
 4. **Fin de parcours** : la réponse suit exactement la spec (liste seule ; page incomplète = dernière page). Faut-il ajouter des métadonnées (`page`, `pageSize`, `hasNextPage`) ? `hasNextPage` est peu coûteux (lire `pageSize + 1` lignes).
 5. **Dates sans offset** : les accepter (interprétées dans le fuseau du serveur) ou les rejeter en `400` ?
 6. **Index** : remplacer `ix_users_onboarded_at` (choix du plan) ou le conserver en plus, si une autre requête doit filtrer par date tous tenants confondus ?
+
+## Révision : `asOf` (2026-11-20)
+
+Ajout d'un paramètre `asOf` pour que des insertions pendant le parcours ne décalent pas les pages.
+
+### Contrat
+
+- Requête : `asOf` **obligatoire**, fourni par l'appelant (`DateTimeOffset`, n'importe quel offset, converti en UTC). Seuls les users avec `inserted_at <= asOf` (borne incluse) sont renvoyés. Absent → `400` (`'asOf' must not be empty.`).
+- Réponse : inchangée (format de la spec) ; l'appelant connaît déjà `asOf`.
+- Usage attendu : l'appelant fixe `asOf` au début du parcours et passe la même valeur pour toutes les pages.
+
+### Choix
+
+- **`asOf` fourni par l'appelant**, jamais calculé par le serveur. Une première version renvoyait l'heure de la base quand `asOf` était absent ; elle a été abandonnée à la demande : l'appelant maîtrise seul l'instant de référence.
+- **Index** : `inserted_at` est ajouté en `INCLUDE` à `ix_users_tenant_id_onboarded_at_tenant_user_id` (migration `IncludeInsertedAtInOnboardingsIndex`) : il n'est pas une clé de l'index (ni filtre d'égalité ni tri), mais sa présence permet de garder un parcours d'index seul.
+
+### Limites
+
+- **Deux horloges** : `inserted_at` vient de l'horloge de PostgreSQL (`now()`), `asOf` de celle de l'appelant. Si l'horloge de l'appelant est en avance, `asOf` est dans le futur pour la base : des users insérés pendant le parcours ont `inserted_at <= asOf` et peuvent encore décaler les pages. `asOf` n'est pas contrôlé (pas de rejet d'un `asOf` futur).
+- **Heure de début de transaction** : `now()` est l'heure de début de la transaction d'insertion, pas celle de sa validation. Une transaction commencée avant `asOf` mais validée après produit une ligne avec `inserted_at <= asOf` qui apparaît en cours de parcours.
+- **Recommandation aux appelants** : choisir `asOf` légèrement dans le passé (ex. heure courante moins une minute). Cette marge absorbe à la fois un décalage d'horloge et les transactions en cours, tant qu'ils restent inférieurs à la marge.
+- **Insertions tardives** : un user inséré après `asOf` avec un `onboardedAt` dans la plage n'est pas vu par ce parcours. Il le sera par un parcours ultérieur de la même plage avec un `asOf` plus récent ; c'est au processus de réconciliation de rejouer les plages concernées si nécessaire.
+
+### Tests ajoutés
+
+1. `asOf` est une borne incluse et accepte un offset : un user est renvoyé avec `asOf` = son `insertedAt` exprimé en `+02:00`, et exclu avec une microseconde de moins.
+2. Un user inséré après `asOf` est exclu ; il est inclus avec un `asOf` postérieur.
+3. Scénario de décalage : 4 users, `pageSize=2`, insertion d'un user dans la page 1 entre les deux appels → avec le même `asOf`, la page 2 reste `[C, D]` ; avec un `asOf` postérieur à l'insertion, elle devient `[B, C]`.
+4. `asOf` absent ou illisible → `400` (`'asOf' must not be empty.`, `'asOf' must be a valid DateTimeOffset. You entered '...'.`).
+5. Le format JSON de la réponse reste `{ "userOnboardings": [...] }`.

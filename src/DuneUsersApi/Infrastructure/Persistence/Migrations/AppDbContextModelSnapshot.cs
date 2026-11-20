@@ -34,15 +34,17 @@ namespace DuneUsersApi.Infrastructure.Persistence.Migrations
                         .HasColumnType("date")
                         .HasColumnName("birth_date");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
                     b.Property<string>("FirstName")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("first_name");
+
+                    b.Property<DateTimeOffset>("InsertedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("inserted_at")
+                        .HasDefaultValueSql("now()");
 
                     b.Property<string>("LastName")
                         .IsRequired()
@@ -105,6 +107,8 @@ namespace DuneUsersApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "OnboardedAt", "TenantUserId")
                         .HasDatabaseName("ix_users_tenant_id_onboarded_at_tenant_user_id");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("TenantId", "OnboardedAt", "TenantUserId"), new[] { "InsertedAt" });
 
                     b.ToTable("users", null, t =>
                         {
