@@ -2,16 +2,35 @@ using DuneUsersApi.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Testcontainers.PostgreSql;
+
+// Nécessaire pour que FastEndpoints appelle OnCachedWafDisposedAsync (arrêt du conteneur en fin de run).
+[assembly: EnableAdvancedTesting]
 
 namespace DuneUsersApi.Tests.Fixtures;
 
 /// <summary>
 /// Démarre l'API en mémoire, branchée sur une vraie instance PostgreSQL lancée par Testcontainers.
 /// </summary>
+/// <remarks>
+/// FastEndpoints met en cache l'application (WAF) par type de fixture : toutes les classes de tests qui utilisent
+/// <see cref="ApiFixture"/> partagent la même application, la même base et la même horloge. PreSetupAsync,
+/// ConfigureApp et ConfigureServices ne sont exécutés qu'une fois ; SetupAsync et TearDownAsync le sont par classe.
+/// </remarks>
 public sealed class ApiFixture : AppFixture<Program>
 {
-    private PostgreSqlContainer _postgres = null!;
+    /// <summary>Heure initiale de l'horloge de test.</summary>
+    public static readonly DateTimeOffset StartTime = new(2026, 1, 15, 9, 30, 0, TimeSpan.Zero);
+
+    // Statique : un seul conteneur pour l'application en cache, quelle que soit l'instance de fixture.
+    private static PostgreSqlContainer? _postgres;
+
+    /// <summary>
+    /// Horloge de l'application (celle enregistrée dans l'injection de dépendances). Partagée par toutes les classes
+    /// de tests : un test qui en dépend doit la positionner lui-même (<c>SetUtcNow</c>) plutôt que supposer sa valeur.
+    /// </summary>
+    public FakeTimeProvider Time => (FakeTimeProvider)Services.GetRequiredService<TimeProvider>();
 
     protected override async ValueTask PreSetupAsync()
     {
@@ -22,7 +41,12 @@ public sealed class ApiFixture : AppFixture<Program>
     protected override void ConfigureApp(IWebHostBuilder a)
     {
         a.UseEnvironment("Testing");
-        a.UseSetting("ConnectionStrings:Postgres", _postgres.GetConnectionString());
+        a.UseSetting("ConnectionStrings:Postgres", _postgres!.GetConnectionString());
+    }
+
+    protected override void ConfigureServices(IServiceCollection s)
+    {
+        s.AddSingleton<TimeProvider>(new FakeTimeProvider(StartTime));
     }
 
     protected override async ValueTask SetupAsync()
@@ -32,8 +56,11 @@ public sealed class ApiFixture : AppFixture<Program>
         await db.Database.MigrateAsync();
     }
 
-    protected override async ValueTask TearDownAsync()
+    protected override async ValueTask OnCachedWafDisposedAsync()
     {
-        await _postgres.DisposeAsync();
+        if (_postgres is not null)
+        {
+            await _postgres.DisposeAsync();
+        }
     }
 }

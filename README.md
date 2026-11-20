@@ -54,15 +54,25 @@ dotnet ef migrations add <NomDeLaMigration> \
   --output-dir Infrastructure/Persistence/Migrations
 ```
 
+Les tables, colonnes, index et contraintes sont nommés en snake_case (`EFCore.NamingConventions`).
+
+## Modèle de données
+
+Table `users` : un user par couple `(tenant_id, tenant_user_id)`, avec nom, prénom, date de naissance, adresse (colonnes `address_*`), `created_at` et `onboarded_at`. Détail dans [docs/plans/02-Database model.md](docs/plans/02-Database%20model.md).
+
+Les dates sont stockées en `timestamptz` : l'instant est conservé, mais pas l'offset d'origine (relu en UTC). `created_at` est calculé par l'application (`TimeProvider`) à l'insertion.
+
 ## Structure
 
 ```
 src/DuneUsersApi/
-  Features/<Feature>/        # un dossier par feature : endpoints, requêtes, réponses, validateurs
-  Infrastructure/Persistence # AppDbContext, configurations EF Core, migrations
+  Features/<Feature>/              # un dossier par feature : endpoints, requêtes, réponses, validateurs
+  Infrastructure/Persistence/      # AppDbContext, intercepteurs EF Core, migrations
+    <Entité>/                      # entité, types complexes et configuration EF Core (ex. Users/)
 tests/DuneUsersApi.Tests/
-  Fixtures/ApiFixture.cs     # API + PostgreSQL (Testcontainers)
-  Features/<Feature>/        # tests d'intégration par feature
+  Fixtures/ApiFixture.cs           # API + PostgreSQL (Testcontainers) + horloge de test
+  Features/<Feature>/              # tests d'intégration par feature
+  Infrastructure/Persistence/      # tests du mapping EF Core
 ```
 
 ## Endpoints

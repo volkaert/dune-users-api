@@ -13,5 +13,8 @@ API C# .NET 10 avec FastEndpoints, PostgreSQL (EF Core / Npgsql) et Docker Compo
 - Organisation par feature : `src/DuneUsersApi/Features/<Feature>/`. Un endpoint = une classe FastEndpoints, avec sa requête, sa réponse et son validateur dans le même dossier.
 - Chaque endpoint a des tests d'intégration dans `tests/DuneUsersApi.Tests/Features/<Feature>/`, basés sur `ApiFixture` (`TestBase<ApiFixture>`) et des assertions Shouldly.
 - Versions des packages NuGet uniquement dans `Directory.Packages.props` (gestion centralisée) ; les `.csproj` ne portent pas de version.
-- Entités et configurations EF Core dans `Infrastructure/Persistence`. Migrations générées avec `dotnet ef` dans `Infrastructure/Persistence/Migrations`.
+- Entités et configurations EF Core dans `Infrastructure/Persistence/<Entité>/`. Migrations générées avec `dotnet ef` dans `Infrastructure/Persistence/Migrations`. Nommage snake_case automatique (`UseSnakeCaseNamingConvention`).
+- Dates : `DateTimeOffset` ↔ `timestamptz`. Npgsql refuse un offset non nul : convertir en UTC (`ToUniversalTime()`) avant écriture. L'offset d'origine n'est pas conservé.
+- Heure courante : toujours via `TimeProvider` (injecté), jamais `DateTime.UtcNow` / `DateTimeOffset.UtcNow`.
+- Tests : `ApiFixture` est partagée par toutes les classes de tests (application, base et horloge `FakeTimeProvider` communes). Isoler les données par un `TenantId` unique, et positionner l'horloge (`SetUtcNow`) dans les tests qui en dépendent.
 - Specs dans `docs/specs/`, plans d'implémentation dans `docs/plans/`.
